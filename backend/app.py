@@ -7,6 +7,7 @@ import numpy as np
 import xarray as xr
 from PIL import Image
 from flask import Flask, Response, abort
+from flask_cors import CORS
 
 
 # Physical constants
@@ -155,6 +156,8 @@ def to_minus180_180(lon_1d: np.ndarray, elev_m: np.ndarray):
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    # Enable CORS for all origins and expose custom headers used by the client
+    CORS(app, resources={r"/*": {"origins": "*"}}, expose_headers=["X-Bounds", "X-Size"]) 
 
     data_path = resolve_data_path()
     ds = open_era5_dataset(data_path)
@@ -210,8 +213,6 @@ def create_app() -> Flask:
 
         # Expose custom headers so browsers can read them from JS
         resp = Response(png, mimetype="image/png")
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Expose-Headers"] = "X-Bounds, X-Size"
         resp.headers["X-Bounds"] = ",".join(map(str, bounds))
         resp.headers["X-Size"] = f"{nx}x{ny}"
         return resp

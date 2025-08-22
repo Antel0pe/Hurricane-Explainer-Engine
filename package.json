@@ -15,12 +15,13 @@
     "@deck.gl/layers": "^9.1.14",
     "@deck.gl/mapbox": "^9.1.14",
     "@deck.gl/react": "^9.1.14",
-    "cesium": "^1.132.0",
+    "@types/three": "^0.179.0",
     "gl-matrix": "^3.4.4",
     "maplibre-gl": "^5.6.2",
     "next": "15.5.0",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "three": "^0.179.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
