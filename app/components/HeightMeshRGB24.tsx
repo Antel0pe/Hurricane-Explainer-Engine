@@ -77,8 +77,27 @@ export default function HeightMeshRGB24({
       pos.needsUpdate = true;
       geo.computeVertexNormals();
 
+      // Create a color attribute (one RGB triplet per vertex)
+      const colors = new Float32Array(pos.count * 3);
+
+      for (let i = 0; i < pos.count; i++) {
+        const z = pos.getZ(i) / zScale; // original elevation in meters
+        const t = (z - zMin) / (zMax - zMin); // normalize to [0,1]
+
+        // Interpolate: low = red, high = blue
+        const b = 1 - t;  // red fades out as height increases
+        const g = 0;      // no green for now
+        const r = t;      // blue fades in as height increases
+
+        colors[i * 3 + 0] = r;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = b;
+      }
+
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
       const mat = new THREE.MeshStandardMaterial({
-        color: 0x9ea5ad,
+        vertexColors: true,
         roughness: 0.9,
         metalness: 0.05,
       });
