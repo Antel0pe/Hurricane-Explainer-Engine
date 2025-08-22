@@ -111,8 +111,46 @@ def encode_terrain_rgb_png(elev_m: np.ndarray, lat: np.ndarray, lon: np.ndarray)
     buf.seek(0)
 
     ny, nx = elev_m.shape
-    bounds = (float(lon[0]), float(lat[0]), float(lon[-1]), float(lat[-1]))
+    min_lon = float(lon[0]) if lon[0] <= lon[-1] else float(lon[-1])
+    max_lon = float(lon[-1]) if lon[-1] >= lon[0] else float(lon[0])
+    min_lat = float(lat[0]) if lat[0] <= lat[-1] else float(lat[-1])
+    max_lat = float(lat[-1]) if lat[-1] >= lat[0] else float(lat[0])
+    print("--------------------------------")
+    print(lat)
+    print(lon)
+    print(min_lon, min_lat, max_lon, max_lat)
+    bounds = (min_lon, min_lat, max_lon, max_lat)
     return buf.read(), bounds, nx, ny
+
+
+def to_minus180_180(lon_1d: np.ndarray, elev_m: np.ndarray):
+    """
+    Convert a (ny, nx) elev grid with lon in [0,360) to [-180,180),
+    rolling columns so longitudes align with the new axis.
+    Returns lon_new (nx,), elev_new (ny,nx)
+    """
+    lon = lon_1d.copy()
+    nx = lon.size
+    # Detect spacing
+    dlon = float(np.round((lon[1] - lon[0]) * 1e6) / 1e6)
+    # If already -180..180, do nothing
+    if lon.min() >= -180 and lon.max() <= 180:
+        return lon, elev_m
+
+    # How many columns to roll so that -180 is at index 0
+    # Typical ERA5: lon[0]=0, dlon=0.25 -> shift=+720
+    shift = int(np.round((-180.0 - lon[0]) / dlon)) % nx
+
+    elev_rot = np.roll(elev_m, shift=shift, axis=1)
+    lon_rot = lon + shift * dlon
+    # Wrap into [-180,180)
+    lon_rot = ((lon_rot + 180.0) % 360.0) - 180.0
+
+    # Ensure strictly increasing lon
+    order = np.argsort(lon_rot)
+    lon_sorted = lon_rot[order]
+    elev_sorted = elev_rot[:, order]
+    return lon_sorted, elev_sorted
 
 
 def create_app() -> Flask:
@@ -153,16 +191,30 @@ def create_app() -> Flask:
         elev_m = slice_da.values.astype(np.float32)
         if elev_m.ndim != 2:
             abort(500, description="Unexpected data shape for z500 slice")
+            
+        print(lat)
+        print(lon)
 
-        png, bounds, nx, ny = encode_terrain_rgb_png(elev_m, lat, lon)
+        # Normalize lon to [-180, 180) and roll columns to match
+        lon_fixed, elev_fixed = to_minus180_180(lon, elev_m)
+        print("--------------------------------")
+        print(lon_fixed)
 
-        headers = {
-            "Access-Control-Allow-Origin": "*",
-            "X-Bounds": ",".join(map(str, bounds)),
-            "X-Size": f"{nx}x{ny}",
-        }
+        # Ensure image rows go north (top) -> south (bottom)
+        lat_work = lat.copy()
+        if lat_work[0] < lat_work[-1]:
+            elev_fixed = elev_fixed[::-1, :]
+            lat_work = lat_work[::-1]
 
-        return Response(png, mimetype="image/png", headers=headers)
+        png, bounds, nx, ny = encode_terrain_rgb_png(elev_fixed, lat_work, lon_fixed)
+
+        # Expose custom headers so browsers can read them from JS
+        resp = Response(png, mimetype="image/png")
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Expose-Headers"] = "X-Bounds, X-Size"
+        resp.headers["X-Bounds"] = ",".join(map(str, bounds))
+        resp.headers["X-Size"] = f"{nx}x{ny}"
+        return resp
 
     return app
 
