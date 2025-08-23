@@ -79,6 +79,13 @@ type Props = { pngUrl: string };
 
 export default function HeightMesh_Shaders({ pngUrl }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const meshRef = useRef<THREE.Mesh | null>(null);
+  const sunRef = useRef<THREE.DirectionalLight | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -112,7 +119,6 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
     scene.add(sun);
 
     let stopped = false;
-    let shaderMesh: THREE.Mesh | null = null;
 
     // --- render-on-demand (guarded; no recursive re-entry) ---
     let rafId: number | null = null;
@@ -151,13 +157,59 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
       if (!animating) renderOnce();
     });
 
-    // Load the PNG as a texture and feed it to a shader material
+    // Initial render (no mesh yet)
+    renderOnce();
+
+    // Resize to parent
+    const ro = new ResizeObserver(() => {
+      const { w, h } = getSize();
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderOnce();
+    });
+    ro.observe(host);
+
+    // Stash refs for reuse
+    rendererRef.current = renderer;
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+    sunRef.current = sun;
+    roRef.current = ro;
+
+    // Cleanup
+    return () => {
+      stopped = true;
+      if (rafId != null) cancelAnimationFrame(rafId);
+      ro.disconnect();
+      controls.dispose();
+      if (meshRef.current) {
+        (meshRef.current.geometry as THREE.BufferGeometry).dispose();
+        const m = meshRef.current.material as THREE.ShaderMaterial;
+        const tex = m.uniforms?.uTexture?.value as THREE.Texture | undefined;
+        if (tex) tex.dispose();
+        m.dispose();
+        meshRef.current = null;
+      }
+      renderer.dispose();
+      if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  // Load/replace texture and update or create the mesh when pngUrl changes
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const sun = sunRef.current;
+    if (!renderer || !scene || !camera || !controls || !sun) return;
+
     const loader = new THREE.TextureLoader();
     loader.load(
       pngUrl,
       (texture) => {
-        // Treat PNG as data or color depending on your use case
-        // For data (heightmaps), disable color transforms
         texture.colorSpace = THREE.NoColorSpace;
         texture.wrapS = THREE.ClampToEdgeWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -182,25 +234,39 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
         const uvToWorld = new THREE.Vector2(aspect, 1.0);
         const lightDir = sun.position.clone().normalize().negate();
 
-        const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-        const mat = new THREE.ShaderMaterial({
-          uniforms: {
-            uTexture: { value: texture },
-            uExaggeration: { value: 0.5 },
-            uTexelSize: { value: texelSize },
-            uUvToWorld: { value: uvToWorld },
-            uLightDir: { value: lightDir },
-          },
-          vertexShader: VERT,
-          fragmentShader: FRAG,
-        });
+        if (!meshRef.current) {
+          const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
+          const mat = new THREE.ShaderMaterial({
+            uniforms: {
+              uTexture: { value: texture },
+              uExaggeration: { value: 0.5 },
+              uTexelSize: { value: texelSize },
+              uUvToWorld: { value: uvToWorld },
+              uLightDir: { value: lightDir },
+            },
+            vertexShader: VERT,
+            fragmentShader: FRAG,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          scene.add(mesh);
+          meshRef.current = mesh;
+        } else {
+          const mesh = meshRef.current;
+          const mat = mesh.material as THREE.ShaderMaterial;
+          const prevTex = mat.uniforms?.uTexture?.value as THREE.Texture | undefined;
+          mat.uniforms.uTexture.value = texture;
+          mat.uniforms.uTexelSize.value = texelSize;
+          mat.uniforms.uUvToWorld.value = uvToWorld;
+          mat.uniforms.uLightDir.value = lightDir;
+          if (prevTex) prevTex.dispose();
 
-        shaderMesh = new THREE.Mesh(geo, mat);
-        scene.add(shaderMesh);
+          const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
+          (mesh.geometry as THREE.BufferGeometry).dispose();
+          mesh.geometry = newGeo;
+        }
 
-        // Frame camera to the plane
         const sphere = new THREE.Sphere();
-        new THREE.Box3().setFromObject(shaderMesh).getBoundingSphere(sphere);
+        new THREE.Box3().setFromObject(meshRef.current!).getBoundingSphere(sphere);
         const fov = THREE.MathUtils.degToRad(camera.fov);
         const dist = sphere.radius / Math.sin(fov / 2);
         camera.position.set(
@@ -215,43 +281,13 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
         controls.target.copy(sphere.center);
         controls.update();
 
-        renderOnce();
+        renderer.render(scene, camera);
       },
       undefined,
       (err) => {
         console.error("Texture load error", err);
       }
     );
-
-    // Initial render (no mesh yet)
-    renderOnce();
-
-    // Resize to parent
-    const ro = new ResizeObserver(() => {
-      const { w, h } = getSize();
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderOnce();
-    });
-    ro.observe(host);
-
-    // Cleanup
-    return () => {
-      stopped = true;
-      if (rafId != null) cancelAnimationFrame(rafId);
-      ro.disconnect();
-      controls.dispose();
-      if (shaderMesh) {
-        (shaderMesh.geometry as THREE.BufferGeometry).dispose();
-        const m = shaderMesh.material as THREE.ShaderMaterial;
-        const tex = m.uniforms?.uTexture?.value as THREE.Texture | undefined;
-        if (tex) tex.dispose();
-        m.dispose();
-      }
-      renderer.dispose();
-      if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
-    };
   }, [pngUrl]);
 
   // Fill parent, not window
