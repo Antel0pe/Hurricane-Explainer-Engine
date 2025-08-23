@@ -31,6 +31,10 @@ const FRAG = `
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uTexture;
+  uniform float uExaggeration;
+  uniform vec2 uTexelSize;    // 1.0 / (texture width, height)
+  uniform vec2 uUvToWorld;    // (aspect, 1.0) to scale UV steps to world XY
+  uniform vec3 uLightDir;     // normalized light direction
 
   // Decode RGB24 to meters: elev_m = ((R<<16)|(G<<8)|B)*0.1 - 10000.0
   float decodeElevation(vec3 rgb) {
@@ -46,12 +50,27 @@ const FRAG = `
   }
 
   void main() {
-    vec4 texel = texture2D(uTexture, vUv);
-    float elev = decodeElevation(texel.rgb);
+    // Base color from decoded elevation (red-blue ramp)
+    float elevC = decodeElevation(texture2D(uTexture, vUv).rgb);
+    float tC = clamp((elevC - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    vec3 base = rampRedBlue(tC);
 
-    // Map 4600..6000 to 0..1, clamp outside
-    float t = clamp((elev - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
-    vec3 color = rampRedBlue(t);
+    // Per-pixel normal from finite differences on normalized height (same mapping as vertex displacement)
+    float elevR = decodeElevation(texture2D(uTexture, vUv + vec2(uTexelSize.x, 0.0)).rgb);
+    float elevU = decodeElevation(texture2D(uTexture, vUv + vec2(0.0, uTexelSize.y)).rgb);
+    float tR = clamp((elevR - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    float tU = clamp((elevU - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+
+    // Build tangent vectors in world units: delta in X/Y and corresponding Z change
+    vec3 dX = vec3(uUvToWorld.x * uTexelSize.x, 0.0, (tR - tC) * uExaggeration);
+    vec3 dY = vec3(0.0, uUvToWorld.y * uTexelSize.y, (tU - tC) * uExaggeration);
+    vec3 N = normalize(cross(dY, dX));
+
+    // Simple Lambert with ambient so it doesn't get too dark
+    float lambert = max(dot(N, normalize(uLightDir)), 0.0);
+    float ambient = 0.35;
+    float diffuse = 0.65 * lambert;
+    vec3 color = base * (ambient + diffuse);
     gl_FragColor = vec4(color, 1.0);
   }
 `;
@@ -159,12 +178,18 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
           texHeight = (imageData as { height: number }).height;
         }
         const aspect = texHeight !== 0 ? texWidth / texHeight : 1.0;
+        const texelSize = new THREE.Vector2(1 / Math.max(1, texWidth), 1 / Math.max(1, texHeight));
+        const uvToWorld = new THREE.Vector2(aspect, 1.0);
+        const lightDir = sun.position.clone().normalize().negate();
 
         const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
         const mat = new THREE.ShaderMaterial({
           uniforms: {
             uTexture: { value: texture },
             uExaggeration: { value: 0.5 },
+            uTexelSize: { value: texelSize },
+            uUvToWorld: { value: uvToWorld },
+            uLightDir: { value: lightDir },
           },
           vertexShader: VERT,
           fragmentShader: FRAG,
