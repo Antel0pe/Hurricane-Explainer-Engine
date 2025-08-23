@@ -31,6 +31,24 @@ def resolve_gph_image_dir() -> str:
     return out_dir
 
 
+def resolve_lsm_path() -> str:
+    """Resolve absolute path to data/lsm.grib relative to this file."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(os.path.join(here, os.pardir))
+    data_path = os.path.join(root, "data", "lsm.grib")
+    return data_path
+
+
+def resolve_landmask_image_path() -> str:
+    """Resolve absolute path to data/landMask.png relative to this file."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(os.path.join(here, os.pardir))
+    out_path = os.path.join(root, "data", "landMask.png")
+    out_dir = os.path.dirname(out_path)
+    os.makedirs(out_dir, exist_ok=True)
+    return out_path
+
+
 def open_era5_dataset(path: str) -> xr.Dataset:
     """Open a GRIB dataset via cfgrib. Assumes ERA5 content is present."""
     if not os.path.exists(path):
@@ -58,6 +76,27 @@ def select_z500(era5_ds: xr.Dataset) -> xr.DataArray:
         da = z_da
 
     # Ensure latitude increases south->north
+    if "latitude" in da.coords and da.latitude.ndim == 1 and np.any(np.diff(da.latitude.values) < 0):
+        da = da.sortby("latitude")
+
+    return da
+
+
+def select_lsm(era5_ds: xr.Dataset) -> xr.DataArray:
+    """Select land-sea mask (lsm) from ERA5 dataset and reduce to 2D lat-lon.
+
+    Any extra dims (e.g., time, step) are reduced by taking the first index.
+    Ensures latitude increases south->north.
+    """
+    if "lsm" not in era5_ds.variables:
+        raise KeyError("Variable 'lsm' (land-sea mask) not found in dataset")
+
+    da = era5_ds["lsm"]
+    # Reduce non-spatial dims to first index
+    for dim in list(da.dims):
+        if dim not in {"latitude", "longitude"}:
+            da = da.isel({dim: 0})
+
     if "latitude" in da.coords and da.latitude.ndim == 1 and np.any(np.diff(da.latitude.values) < 0):
         da = da.sortby("latitude")
 
@@ -163,6 +202,33 @@ def to_minus180_180(lon_1d: np.ndarray, elev_m: np.ndarray):
     return lon_sorted, elev_sorted
 
 
+def encode_landmask_png(mask_land: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> Tuple[bytes, Tuple[float, float, float, float], int, int]:
+    """Encode a land mask into a black/white PNG with bounds.
+
+    mask_land is True for land (black), False for sea (white).
+    Returns: (png_bytes, bounds[minLon,minLat,maxLon,maxLat], nx, ny)
+    """
+    sea = (~mask_land).astype(np.uint8) * 255
+    r = sea
+    g = sea
+    b = sea
+    a = np.full_like(sea, 255, dtype=np.uint8)
+    rgba = np.dstack([r, g, b, a])
+
+    image = Image.fromarray(rgba, mode="RGBA")
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+
+    ny, nx = mask_land.shape
+    min_lon = float(lon[0]) if lon[0] <= lon[-1] else float(lon[-1])
+    max_lon = float(lon[-1]) if lon[-1] >= lon[0] else float(lon[0])
+    min_lat = float(lat[0]) if lat[0] <= lat[-1] else float(lat[-1])
+    max_lat = float(lat[-1]) if lat[-1] >= lat[0] else float(lat[0])
+    bounds = (min_lon, min_lat, max_lon, max_lat)
+    return buf.read(), bounds, nx, ny
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     # Enable CORS for all origins and expose custom headers used by the client
@@ -251,6 +317,75 @@ def create_app() -> Flask:
         png, bounds, nx, ny = encode_terrain_rgb_png(elev_fixed, lat_work, lon_fixed)
 
         # Expose custom headers so browsers can read them from JS
+        resp = Response(png, mimetype="image/png")
+        resp.headers["X-Bounds"] = ",".join(map(str, bounds))
+        resp.headers["X-Size"] = f"{nx}x{ny}"
+        return resp
+
+    @app.get("/landMask")
+    def land_mask():
+        """Return a global land/sea mask as black/white PNG with bounds headers.
+
+        - Land: black (0,0,0)
+        - Sea: white (255,255,255)
+        Uses ERA5 land-sea mask from data/lsm.grib.
+        """
+        image_path = resolve_landmask_image_path()
+        lsm_path = resolve_lsm_path()
+
+        # If cached image exists, return it with computed headers using z500 lat/lon
+        if os.path.exists(image_path):
+            elev_stub = np.zeros((lat.size, lon.size), dtype=np.float32)
+            lon_fixed, _ = to_minus180_180(lon, elev_stub)
+
+            lat_work = lat.copy()
+            if lat_work[0] < lat_work[-1]:
+                lat_work = lat_work[::-1]
+
+            nx = lon_fixed.size
+            ny = lat_work.size
+            min_lon = float(lon_fixed[0]) if lon_fixed[0] <= lon_fixed[-1] else float(lon_fixed[-1])
+            max_lon = float(lon_fixed[-1]) if lon_fixed[-1] >= lon_fixed[0] else float(lon_fixed[0])
+            min_lat = float(lat_work[0]) if lat_work[0] <= lat_work[-1] else float(lat_work[-1])
+            max_lat = float(lat_work[-1]) if lat_work[-1] >= lat_work[0] else float(lat_work[0])
+            bounds = (min_lon, min_lat, max_lon, max_lat)
+
+            with open(image_path, "rb") as f:
+                data = f.read()
+            resp = Response(data, mimetype="image/png")
+            resp.headers["X-Bounds"] = ",".join(map(str, bounds))
+            resp.headers["X-Size"] = f"{nx}x{ny}"
+            return resp
+
+        # Otherwise, generate from source lsm.grib
+        try:
+            lsm_ds = open_era5_dataset(lsm_path)
+            lsm_da = select_lsm(lsm_ds)
+        except Exception as e:
+            abort(500, description=f"Unable to open land mask source (data/lsm.grib): {e}")
+
+        lat_lsm = lsm_da.latitude.values if "latitude" in lsm_da.coords else None
+        lon_lsm = lsm_da.longitude.values if "longitude" in lsm_da.coords else None
+        if lat_lsm is None or lon_lsm is None:
+            abort(500, description="Expected 'latitude' and 'longitude' in LSM dataset")
+
+        lsm_vals = lsm_da.values.astype(np.float32)
+        # ERA5 LSM: 1 over land, 0 over sea. Threshold at > 0.5
+        mask_land = lsm_vals > 0.5
+
+        lon_fixed, mask_fixed = to_minus180_180(lon_lsm, mask_land.astype(np.float32))
+
+        lat_work = lat_lsm.copy()
+        if lat_work[0] < lat_work[-1]:
+            mask_fixed = mask_fixed[::-1, :]
+            lat_work = lat_work[::-1]
+
+        mask_fixed_bool = mask_fixed >= 0.5
+        png, bounds, nx, ny = encode_landmask_png(mask_fixed_bool, lat_work, lon_fixed)
+
+        with open(image_path, "wb") as f:
+            f.write(png)
+
         resp = Response(png, mimetype="image/png")
         resp.headers["X-Bounds"] = ",".join(map(str, bounds))
         resp.headers["X-Size"] = f"{nx}x{ny}"

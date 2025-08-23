@@ -19,7 +19,7 @@ export default function Home() {
         {/* <CesiumMap datehour={datehour} /> */}
         {/* <HeightMesh datehour={datehour} /> */}
         {/* <HeightMeshRGB24 pngUrl={`http://localhost:8001/gph/${datehour}`} exaggeration={0.25} />; */}
-        <HeightMesh_Shaders pngUrl={`http://localhost:8001/gph/${datehour}`} exaggeration={0.25} />;
+        <HeightMesh_Shaders pngUrl={`http://localhost:8001/gph/${datehour}`} landUrl={`http://localhost:8001/landMask`} exaggeration={0.25} />;
       </div>
       <div style={{flex: "0 0 20%", borderTop: "1px solid rgba(0,0,0,0.1)"}}>
         <TimeSlider value={datehour} onChange={setDatehour} />

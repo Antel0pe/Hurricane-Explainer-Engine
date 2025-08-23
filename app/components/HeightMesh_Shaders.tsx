@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -31,6 +31,7 @@ const FRAG = `
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uTexture;
+  uniform sampler2D uLandTexture;
   uniform float uExaggeration;
   uniform vec2 uTexelSize;    // 1.0 / (texture width, height)
   uniform vec2 uUvToWorld;    // (aspect, 1.0) to scale UV steps to world XY
@@ -71,13 +72,20 @@ const FRAG = `
     float ambient = 0.35;
     float diffuse = 0.65 * lambert;
     vec3 color = base * (ambient + diffuse);
+
+    // Land mask: if land texture is black, force black output; if white, keep color
+    vec3 landRgb = texture2D(uLandTexture, vUv).rgb;
+    float landWhiteLevel = max(max(landRgb.r, landRgb.g), landRgb.b);
+    float isLand = step(0.5, 1.0 - landWhiteLevel);
+    color = mix(color, vec3(0.0), isLand * 0.25);
+
     gl_FragColor = vec4(color, 1.0);
   }
 `;
 
-type Props = { pngUrl: string };
+type Props = { pngUrl: string; landUrl?: string; exaggeration?: number };
 
-export default function HeightMesh_Shaders({ pngUrl }: Props) {
+export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -86,6 +94,8 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
   const meshRef = useRef<THREE.Mesh | null>(null);
   const sunRef = useRef<THREE.DirectionalLight | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
+  const landTexRef = useRef<THREE.Texture | null>(null);
+  const [landTexVersion, setLandTexVersion] = useState(0);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -243,6 +253,7 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
               uTexelSize: { value: texelSize },
               uUvToWorld: { value: uvToWorld },
               uLightDir: { value: lightDir },
+              uLandTexture: { value: landTexRef.current },
             },
             vertexShader: VERT,
             fragmentShader: FRAG,
@@ -288,7 +299,54 @@ export default function HeightMesh_Shaders({ pngUrl }: Props) {
         console.error("Texture load error", err);
       }
     );
-  }, [pngUrl]);
+  }, [pngUrl, exaggeration, landTexVersion]);
+
+  // Load/replace land mask texture when landUrl changes
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !landUrl) return;
+
+    const loader = new THREE.TextureLoader();
+    let disposed = false;
+    loader.load(
+      landUrl,
+      (tex) => {
+        if (disposed) {
+          tex.dispose();
+          return;
+        }
+        tex.colorSpace = THREE.NoColorSpace;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+
+        landTexRef.current = tex;
+        setLandTexVersion((v) => v + 1);
+        const mesh = meshRef.current;
+        if (mesh) {
+          const mat = mesh.material as THREE.ShaderMaterial;
+          const prevLand = mat.uniforms?.uLandTexture?.value as THREE.Texture | undefined;
+          mat.uniforms.uLandTexture = mat.uniforms.uLandTexture || { value: null };
+          mat.uniforms.uLandTexture.value = tex;
+          if (prevLand) prevLand.dispose();
+        }
+        if (renderer && camera && meshRef.current) {
+          renderer.render(scene, camera);
+        }
+      },
+      undefined,
+      () => {}
+    );
+
+    return () => {
+      disposed = true;
+    };
+  }, [landUrl]);
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;
