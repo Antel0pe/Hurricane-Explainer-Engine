@@ -170,8 +170,8 @@ export default function HeightMeshRGB24({
       const dist = sphere.radius / Math.sin(fov / 2);
       camera.position.set(
         sphere.center.x,
-        sphere.center.y - dist * 0.6,
-        sphere.center.z + sphere.radius * 2.2
+        sphere.center.y - dist * 0.2,
+        sphere.center.z + sphere.radius * 1.5
       );
       camera.near = Math.max(0.1, dist * 0.001);
       camera.far = dist * 10;
