@@ -64,7 +64,7 @@ export default function TimeSlider({value, onChange}: TimeSliderProps) {
           return;
         }
         step(dir as -1 | 1);
-      }, 250);
+      }, 100);
     };
 
     const stopTimer = () => {
