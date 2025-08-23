@@ -31,6 +31,15 @@ def resolve_gph_image_dir() -> str:
     return out_dir
 
 
+def resolve_uv_image_dir() -> str:
+    """Resolve absolute path to data/uv_images relative to this file."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(os.path.join(here, os.pardir))
+    out_dir = os.path.join(root, "data", "uv_images")
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir
+
+
 def resolve_lsm_path() -> str:
     """Resolve absolute path to data/lsm.grib relative to this file."""
     here = os.path.dirname(os.path.abspath(__file__))
@@ -318,6 +327,47 @@ def create_app() -> Flask:
 
         # Expose custom headers so browsers can read them from JS
         resp = Response(png, mimetype="image/png")
+        resp.headers["X-Bounds"] = ",".join(map(str, bounds))
+        resp.headers["X-Size"] = f"{nx}x{ny}"
+        return resp
+
+    @app.get("/uv/<datehour>")
+    def uv(datehour: str):
+        """Serve preprocessed UV image (U->R, V->G) for given datehour if present.
+
+        If the image is missing, return 404 with 'image doesn't exist'.
+        """
+        try:
+            dt = parse_datehour(datehour)
+        except ValueError:
+            abort(400, description="Invalid datehour format")
+
+        ts = dt.strftime("%Y%m%d%H")
+        image_dir = resolve_uv_image_dir()
+        image_path = os.path.join(image_dir, f"uv_{ts}.png")
+
+        if not os.path.exists(image_path):
+            abort(404, description="image doesn't exist")
+
+        # Compute bounds and size based on dataset lat/lon (same as gph route)
+        elev_stub = np.zeros((lat.size, lon.size), dtype=np.float32)
+        lon_fixed, _ = to_minus180_180(lon, elev_stub)
+
+        lat_work = lat.copy()
+        if lat_work[0] < lat_work[-1]:
+            lat_work = lat_work[::-1]
+
+        nx = lon_fixed.size
+        ny = lat_work.size
+        min_lon = float(lon_fixed[0]) if lon_fixed[0] <= lon_fixed[-1] else float(lon_fixed[-1])
+        max_lon = float(lon_fixed[-1]) if lon_fixed[-1] >= lon_fixed[0] else float(lon_fixed[0])
+        min_lat = float(lat_work[0]) if lat_work[0] <= lat_work[-1] else float(lat_work[-1])
+        max_lat = float(lat_work[-1]) if lat_work[-1] >= lat_work[0] else float(lat_work[0])
+        bounds = (min_lon, min_lat, max_lon, max_lat)
+
+        with open(image_path, "rb") as f:
+            data = f.read()
+        resp = Response(data, mimetype="image/png")
         resp.headers["X-Bounds"] = ",".join(map(str, bounds))
         resp.headers["X-Size"] = f"{nx}x{ny}"
         return resp

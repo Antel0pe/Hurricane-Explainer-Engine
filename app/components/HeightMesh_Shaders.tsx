@@ -3,12 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-// Vertex shader: displace plane along Z using decoded elevation
-const VERT = `
-  varying vec2 vUv;
-  uniform sampler2D uTexture;
-  uniform float uExaggeration;
-
+// Shared GLSL utilities reused by vertex shaders
+const get_position_z_shared_glsl = `
   float decodeElevation(vec3 rgb) {
     float R = floor(rgb.r * 255.0 + 0.5);
     float G = floor(rgb.g * 255.0 + 0.5);
@@ -16,13 +12,25 @@ const VERT = `
     return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
   }
 
+  float get_position_z(sampler2D tex, vec2 uv, float exaggeration) {
+    float elev = decodeElevation(texture2D(tex, uv).rgb);
+    float t = clamp((elev - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    return exaggeration * t;
+  }
+`;
+
+// Vertex shader: displace plane along Z using decoded elevation
+const VERT = `
+  varying vec2 vUv;
+  uniform sampler2D uTexture;
+  uniform float uExaggeration;
+
+  ${get_position_z_shared_glsl}
+
   void main() {
     vUv = uv;
-    float elev = decodeElevation(texture2D(uTexture, uv).rgb);
     vec3 pos = position;
-    // Normalize elevation to 4600..6000 and displace Z; tweak scale as desired
-    float t = clamp((elev - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
-    pos.z += uExaggeration * t;
+    pos.z = position.z + get_position_z(uTexture, uv, uExaggeration);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `;

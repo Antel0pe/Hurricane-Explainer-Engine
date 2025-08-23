@@ -51,3 +51,8 @@ the vision is to see the hurricane move like a ball on a sheet with valleys and 
 
 another thing is to show multiple times for weather on the SAME map. no time slider showing a single time step of weather at a time. so irma was at coords x1, x2, x3 at dates y1, y2, y3. on a single map at coords x1 we show weather at y1, at coords x2 we show weather at y2, etc. on a single map we should see a unified view explaining why the track is that shape
 - however this is likely to be confusing as at a single timestep the weather will look correct. 500hpa height will look like it makes sense but displaying weather with multiple timesteps will make it look like we cut up multiple height maps and then placed them next to each other. and also the larger context could be lost like there might have been something important at some coords at time t that were covered up by weather at t+1
+
+to wind particles
+- can add u,v to show the 2d direction wind is going
+- can add vertical wind to show if it's going up or down
+- vorticity to show cyclonic development
