@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 const TimeSlider = dynamic(() => import("./components/time_slider"), { ssr: false });
 const HeightMesh = dynamic(() => import("./components/HeightMesh"), { ssr: false });
 const HeightMeshRGB24 = dynamic(() => import("./components/HeightMeshRGB24"), { ssr: false });
+const HeightMesh_Shaders = dynamic(() => import("./components/HeightMesh_Shaders"), { ssr: false });
 
 export default function Home() {
   const initial = useMemo(() => "2017080100", []);
@@ -17,7 +18,8 @@ export default function Home() {
       <div style={{flex: "0 0 80%", position: "relative"}}>
         {/* <CesiumMap datehour={datehour} /> */}
         {/* <HeightMesh datehour={datehour} /> */}
-        <HeightMeshRGB24 pngUrl={`http://localhost:8001/gph/${datehour}`} exaggeration={0.25} />;
+        {/* <HeightMeshRGB24 pngUrl={`http://localhost:8001/gph/${datehour}`} exaggeration={0.25} />; */}
+        <HeightMesh_Shaders pngUrl={`http://localhost:8001/gph/${datehour}`} exaggeration={0.25} />;
       </div>
       <div style={{flex: "0 0 20%", borderTop: "1px solid rgba(0,0,0,0.1)"}}>
         <TimeSlider value={datehour} onChange={setDatehour} />
