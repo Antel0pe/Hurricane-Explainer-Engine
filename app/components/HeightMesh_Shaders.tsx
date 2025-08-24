@@ -91,9 +91,87 @@ const FRAG = `
   }
 `;
 
-type Props = { pngUrl: string; landUrl?: string; exaggeration?: number };
+// GLSL3 shared helpers for points (GLSL3-compatible texture())
+const GET_POSITION_Z_SHARED_GLSL3 = `
+  float decodeElevation(vec3 rgb) {
+    float R = floor(rgb.r * 255.0 + 0.5);
+    float G = floor(rgb.g * 255.0 + 0.5);
+    float B = floor(rgb.b * 255.0 + 0.5);
+    return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
+  }
+  float get_position_z_glsl3(sampler2D tex, vec2 uv, float exaggeration) {
+    float elev = decodeElevation(texture(tex, uv).rgb);
+    float t = clamp((elev - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    return exaggeration * t;
+  }
+`;
 
-export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Props) {
+// GLSL3 shared helpers for deriving XY from gl_VertexID
+const GET_POSITION_XY_SHARED_GLSL3 = `
+  vec2 get_uv_from_vertex_id(int gridW, int gridH) {
+    int i = gl_VertexID % gridW;
+    int j = gl_VertexID / gridW;
+    float u = float(i) / float(gridW - 1);
+    float v = float(j) / float(gridH - 1);
+    return vec2(u, v);
+  }
+  vec2 plane_xy_from_uv(vec2 uv, float aspect) {
+    return vec2((uv.x - 0.5) * aspect, (uv.y - 0.5));
+  }
+  vec2 get_position_xy(int gridW, int gridH, float aspect) {
+    vec2 uv = get_uv_from_vertex_id(gridW, gridH);
+    return plane_xy_from_uv(uv, aspect);
+  }
+`;
+
+// UV wind points shader (GLSL3): derive per-vertex UV/XY from gl_VertexID
+const UV_POINTS_VERT = `
+  ${GET_POSITION_Z_SHARED_GLSL3}
+  ${GET_POSITION_XY_SHARED_GLSL3}
+  uniform sampler2D uTerrainTexture;
+  uniform float uExaggeration;
+  uniform float uAspect;
+  uniform float uPointSize;
+  uniform int uGridW;
+  uniform int uGridH;
+  uniform float uAboveTerrain;
+  flat out int vId;
+  void main(){
+    vec2 uv = get_uv_from_vertex_id(uGridW, uGridH);
+    vec2 xy = get_position_xy(uGridW, uGridH, uAspect);
+    float z = get_position_z_glsl3(uTerrainTexture, uv, uExaggeration);
+    vId = gl_VertexID;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain, 1.0);
+    gl_PointSize = uPointSize;
+  }`;
+const UV_POINTS_FRAG = `
+  precision highp float;
+  flat in int vId;
+  uniform float uKeep;
+  out vec4 fragColor;
+  float rnd(int i) {
+    uint x = uint(i);
+    // Thomas Wang-ish mix — cheap and good enough
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    // 0..1 (keep 24 bits to avoid precision loss when converting to float)
+    return float(x & 0x00ffffffu) * (1.0 / 16777216.0);
+  }
+  void main(){
+    if(rnd(vId) > clamp(uKeep, 0.0, 1.0)) discard;
+    vec2 d = gl_PointCoord - 0.5;
+    if(dot(d,d) > 0.25) discard;
+    fragColor = vec4(0.0,0.0,0.0,1.0);
+  }
+`;
+
+
+type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number };
+
+export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeration }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -104,6 +182,13 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
   const roRef = useRef<ResizeObserver | null>(null);
   const landTexRef = useRef<THREE.Texture | null>(null);
   const [landTexVersion, setLandTexVersion] = useState(0);
+  const [heightTexVersion, setHeightTexVersion] = useState(0);
+  const heightTexRef = useRef<THREE.Texture | null>(null);
+  const uvTexRef = useRef<THREE.Texture | null>(null);
+  const uvPointsRef = useRef<THREE.Points | null>(null);
+  const uvGeoRef = useRef<THREE.BufferGeometry | null>(null);
+  const uvMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  const uvDimsRef = useRef<{ w: number; h: number } | null>(null);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -210,6 +295,16 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
         m.dispose();
         meshRef.current = null;
       }
+      if (uvPointsRef.current) {
+        if (uvGeoRef.current) uvGeoRef.current.dispose();
+        if (uvMatRef.current) uvMatRef.current.dispose();
+        if (uvTexRef.current) uvTexRef.current.dispose();
+        uvPointsRef.current = null;
+        uvGeoRef.current = null;
+        uvMatRef.current = null;
+        uvTexRef.current = null;
+        uvDimsRef.current = null;
+      }
       renderer.dispose();
       if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
     };
@@ -257,7 +352,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
           const mat = new THREE.ShaderMaterial({
             uniforms: {
               uTexture: { value: texture },
-              uExaggeration: { value: 0.5 },
+              uExaggeration: { value: exaggeration ?? 0.5 },
               uTexelSize: { value: texelSize },
               uUvToWorld: { value: uvToWorld },
               uLightDir: { value: lightDir },
@@ -269,6 +364,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
           const mesh = new THREE.Mesh(geo, mat);
           scene.add(mesh);
           meshRef.current = mesh;
+          heightTexRef.current = texture;
+          setHeightTexVersion((v) => v + 1);
         } else {
           const mesh = meshRef.current;
           const mat = mesh.material as THREE.ShaderMaterial;
@@ -278,6 +375,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
           mat.uniforms.uUvToWorld.value = uvToWorld;
           mat.uniforms.uLightDir.value = lightDir;
           if (prevTex) prevTex.dispose();
+          heightTexRef.current = texture;
+          setHeightTexVersion((v) => v + 1);
 
           const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
           (mesh.geometry as THREE.BufferGeometry).dispose();
@@ -308,6 +407,111 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
       }
     );
   }, [pngUrl, exaggeration, landTexVersion]);
+
+  // Load/replace UV wind texture and create/update a persistent point cloud
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera || !uvUrl) return;
+
+    const loader = new THREE.TextureLoader();
+    let disposed = false;
+    loader.load(
+      uvUrl,
+      (texture) => {
+        if (disposed) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = THREE.NoColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.NearestFilter;
+        texture.magFilter = THREE.NearestFilter;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        // Read texture size
+        const img = texture.image as unknown as { width?: number; height?: number };
+        const texW = typeof img?.width === "number" ? img.width : 0;
+        const texH = typeof img?.height === "number" ? img.height : 0;
+        if (texW === 0 || texH === 0) {
+          // can't build point cloud without dims
+          uvTexRef.current?.dispose();
+          uvTexRef.current = texture;
+          return;
+        }
+
+        const aspect = texH !== 0 ? texW / texH : 1.0;
+        const dimsChanged = !uvDimsRef.current || uvDimsRef.current.w !== texW || uvDimsRef.current.h !== texH;
+
+        // Build or update geometry (positions on a centered grid of size aspect x 1)
+        if (!uvPointsRef.current) {
+          // Create geometry with a minimal position attribute (count=W*H) required by Three/WebGL
+          const geo = new THREE.BufferGeometry();
+          const count = texW * texH;
+          geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+
+          // Create material with required uniforms
+          const mat = new THREE.ShaderMaterial({
+            vertexShader: UV_POINTS_VERT,
+            fragmentShader: UV_POINTS_FRAG,
+            transparent: false,
+            depthTest: true,
+            glslVersion: THREE.GLSL3,
+            uniforms: {
+              uTerrainTexture: { value: heightTexRef.current },
+              uExaggeration: { value: exaggeration ?? 0.5 },
+              uAspect: { value: aspect },
+              uPointSize: { value: (1.5 * (window.devicePixelRatio || 1)) * 3.0 },
+              uGridW: { value: texW },
+              uGridH: { value: texH },
+              uKeep: { value: 0.001 },
+              uAboveTerrain: { value: 0.1 },
+            },
+          });
+
+          const pts = new THREE.Points(geo, mat);
+          scene.add(pts);
+          uvPointsRef.current = pts;
+          uvGeoRef.current = geo;
+          uvMatRef.current = mat;
+          uvTexRef.current?.dispose();
+          uvTexRef.current = texture;
+          uvDimsRef.current = { w: texW, h: texH };
+        } else {
+          // Update existing
+          const mat = uvMatRef.current as (THREE.ShaderMaterial & { uniforms: Record<string, { value: unknown }> });
+          const geo = uvGeoRef.current!;
+          mat.uniforms.uTerrainTexture.value = heightTexRef.current;
+          mat.uniforms.uExaggeration.value = typeof exaggeration === 'number' ? exaggeration : 0.5;
+          mat.uniforms.uAspect.value = aspect;
+          mat.uniforms.uPointSize.value = (1.5 * (window.devicePixelRatio || 1)) * 3.0;
+          mat.uniforms.uGridW.value = texW;
+          mat.uniforms.uGridH.value = texH;
+          mat.uniforms.uKeep.value = 0.001;
+          mat.uniforms.uAboveTerrain.value = 0.01;
+          if (dimsChanged) {
+            // Rebuild position attribute to update vertex count
+            const count = texW * texH;
+            geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+            uvDimsRef.current = { w: texW, h: texH };
+          }
+          uvTexRef.current?.dispose();
+          uvTexRef.current = texture;
+        }
+
+        renderer.render(scene, camera);
+      },
+      undefined,
+      () => {}
+    );
+
+    return () => {
+      disposed = true;
+    };
+  }, [uvUrl, exaggeration, heightTexVersion]);
 
   // Load/replace land mask texture when landUrl changes
   useEffect(() => {
@@ -359,5 +563,3 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, exaggeration }: Pr
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;
 }
-
-
