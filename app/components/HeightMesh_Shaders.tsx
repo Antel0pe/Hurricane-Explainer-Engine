@@ -108,19 +108,23 @@ const GET_POSITION_Z_SHARED_GLSL3 = `
 
 // GLSL3 shared helpers for deriving XY from gl_VertexID
 const GET_POSITION_XY_SHARED_GLSL3 = `
-  vec2 get_uv_from_vertex_id(int gridW, int gridH) {
-    int i = gl_VertexID % gridW;
-    int j = gl_VertexID / gridW;
-    float u = float(i) / float(gridW - 1);
-    float v = float(j) / float(gridH - 1);
-    return vec2(u, v);
-  }
+
   vec2 plane_xy_from_uv(vec2 uv, float aspect) {
     return vec2((uv.x - 0.5) * aspect, (uv.y - 0.5));
   }
-  vec2 get_position_xy(int gridW, int gridH, float aspect) {
-    vec2 uv = get_uv_from_vertex_id(gridW, gridH);
-    return plane_xy_from_uv(uv, aspect);
+
+`;
+
+// GLSL3 helper: map gl_VertexID to subsampled UVs using a fixed integer step
+const GET_UV_SUBSAMPLED_GLSL3 = `
+  vec2 get_uv_from_vertex_id_subsampled(int gridW, int gridH, int step) {
+    int outW = (gridW + step - 1) / step;
+    int ii = gl_VertexID % outW;
+    int jj = gl_VertexID / outW;
+    int srcI = min(gridW - 1, ii * step);
+    int srcJ = min(gridH - 1, jj * step);
+    return vec2(float(srcI) / float(gridW - 1),
+                float(srcJ) / float(gridH - 1));
   }
 `;
 
@@ -128,17 +132,19 @@ const GET_POSITION_XY_SHARED_GLSL3 = `
 const UV_POINTS_VERT = `
   ${GET_POSITION_Z_SHARED_GLSL3}
   ${GET_POSITION_XY_SHARED_GLSL3}
+  ${GET_UV_SUBSAMPLED_GLSL3}
   uniform sampler2D uTerrainTexture;
   uniform float uExaggeration;
   uniform float uAspect;
   uniform float uPointSize;
   uniform int uGridW;
   uniform int uGridH;
+  uniform int uStep;
   uniform float uAboveTerrain;
   flat out int vId;
   void main(){
-    vec2 uv = get_uv_from_vertex_id(uGridW, uGridH);
-    vec2 xy = get_position_xy(uGridW, uGridH, uAspect);
+    vec2 uv = get_uv_from_vertex_id_subsampled(uGridW, uGridH, uStep);
+    vec2 xy = plane_xy_from_uv(uv, uAspect);
     float z = get_position_z_glsl3(uTerrainTexture, uv, uExaggeration);
     vId = gl_VertexID;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain, 1.0);
@@ -147,24 +153,11 @@ const UV_POINTS_VERT = `
 const UV_POINTS_FRAG = `
   precision highp float;
   flat in int vId;
-  uniform float uKeep;
   out vec4 fragColor;
-  float rnd(int i) {
-    uint x = uint(i);
-    // Thomas Wang-ish mix — cheap and good enough
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    // 0..1 (keep 24 bits to avoid precision loss when converting to float)
-    return float(x & 0x00ffffffu) * (1.0 / 16777216.0);
-  }
   void main(){
-    if(rnd(vId) > clamp(uKeep, 0.0, 1.0)) discard;
     vec2 d = gl_PointCoord - 0.5;
     if(dot(d,d) > 0.25) discard;
-    fragColor = vec4(0.0,0.0,0.0,1.0);
+    fragColor = vec4(0.0, 0.0, 0.0, 1.0);
   }
 `;
 
@@ -445,12 +438,14 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
         const aspect = texH !== 0 ? texW / texH : 1.0;
         const dimsChanged = !uvDimsRef.current || uvDimsRef.current.w !== texW || uvDimsRef.current.h !== texH;
-
+        const UV_POINTS_STEP = 25; // subsampling step for UV points grid
         // Build or update geometry (positions on a centered grid of size aspect x 1)
         if (!uvPointsRef.current) {
           // Create geometry with a minimal position attribute (count=W*H) required by Three/WebGL
           const geo = new THREE.BufferGeometry();
-          const count = texW * texH;
+          const outW = Math.ceil(texW / UV_POINTS_STEP);
+          const outH = Math.ceil(texH / UV_POINTS_STEP);
+          const count = outW * outH;
           geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
 
           // Create material with required uniforms
@@ -467,7 +462,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               uPointSize: { value: (1.5 * (window.devicePixelRatio || 1)) * 3.0 },
               uGridW: { value: texW },
               uGridH: { value: texH },
-              uKeep: { value: 0.001 },
+              uStep: { value: UV_POINTS_STEP },
               uAboveTerrain: { value: 0.1 },
             },
           });
@@ -490,11 +485,13 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           mat.uniforms.uPointSize.value = (1.5 * (window.devicePixelRatio || 1)) * 3.0;
           mat.uniforms.uGridW.value = texW;
           mat.uniforms.uGridH.value = texH;
-          mat.uniforms.uKeep.value = 0.001;
+          mat.uniforms.uStep.value = UV_POINTS_STEP;
           mat.uniforms.uAboveTerrain.value = 0.01;
           if (dimsChanged) {
             // Rebuild position attribute to update vertex count
-            const count = texW * texH;
+            const outW = Math.ceil(texW / UV_POINTS_STEP);
+            const outH = Math.ceil(texH / UV_POINTS_STEP);
+            const count = outW * outH;
             geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
             uvDimsRef.current = { w: texW, h: texH };
           }
