@@ -115,24 +115,12 @@ const GET_POSITION_XY_SHARED_GLSL3 = `
 
 `;
 
-// GLSL3 helper: map gl_VertexID to simulation texture UV using explicit dimensions
-const GET_SIM_UV_FROM_VERTEX_ID_GLSL3 = `
-  vec2 get_sim_uv_from_vertex_id(int vertexId, int texWidth, int texHeight) {
-    int ix = vertexId % texWidth;
-    int iy = vertexId / texWidth;
-    return vec2(
-        (float(ix) + 0.5) / float(texWidth),
-        (float(iy) + 0.5) / float(texHeight)
-    );
-  }
-`;
-
-// GLSL3 helper: compute seed UV from linear index for subsampled grid
-const GET_SEED_UV_FROM_INDEX_GLSL3 = `
-  vec2 get_seed_uv_from_index(int index, int gridW, int gridH, int step) {
+// GLSL3 helper: map gl_VertexID to subsampled UVs using a fixed integer step
+const GET_UV_SUBSAMPLED_GLSL3 = `
+  vec2 get_uv_from_vertex_id_subsampled(int gridW, int gridH, int step) {
     int outW = (gridW + step - 1) / step;
-    int ii = index % outW;
-    int jj = index / outW;
+    int ii = gl_VertexID % outW;
+    int jj = gl_VertexID / outW;
     int srcI = min(gridW - 1, ii * step);
     int srcJ = min(gridH - 1, jj * step);
     return vec2(float(srcI) / float(gridW - 1),
@@ -140,34 +128,43 @@ const GET_SEED_UV_FROM_INDEX_GLSL3 = `
   }
 `;
 
-// UV wind points shader (GLSL3): read per-vertex current (u,v) from simulation texture and position above terrain
+// GLSL3 helper: sample per-particle offset (RG) from a packed texture using gl_VertexID
+const GET_OFFSET_FROM_ID_GLSL3 = `
+  vec2 get_offset_from_id(sampler2D offsets, vec2 simSize, int vertexId) {
+    int outW = int(simSize.x);
+    int outH = int(simSize.y);
+    int ii = vertexId % outW;
+    int jj = vertexId / outW;
+    vec2 simUV = vec2((float(ii) + 0.5) / float(outW),
+                      (float(jj) + 0.5) / float(outH));
+    return texture(offsets, simUV).rg;
+  }
+`;
+
+// UV wind points shader (GLSL3): derive per-vertex UV/XY from gl_VertexID
 const UV_POINTS_VERT = `
   ${GET_POSITION_Z_SHARED_GLSL3}
   ${GET_POSITION_XY_SHARED_GLSL3}
-  ${GET_SIM_UV_FROM_VERTEX_ID_GLSL3}
+  ${GET_UV_SUBSAMPLED_GLSL3}
+  ${GET_OFFSET_FROM_ID_GLSL3}
   uniform sampler2D uTerrainTexture;
-  uniform sampler2D uPositions; // RG = current (u, v)
+  uniform sampler2D uOffsetPrev;
+  uniform sampler2D uOffsetCurr;
+  uniform vec2 uSimSize;
   uniform float uExaggeration;
   uniform float uAspect;
   uniform float uPointSize;
   uniform int uGridW;
   uniform int uGridH;
   uniform int uStep;
-  uniform int uTexWidth;  // sim texture width
-  uniform int uTexHeight; // sim texture height
   uniform float uAboveTerrain;
   flat out int vId;
   void main(){
-    // Look up this particle's current (u, v) from the simulation texture
-    vec2 simUV = get_sim_uv_from_vertex_id(gl_VertexID, uTexWidth, uTexHeight);
-    vec2 particleUV = texture(uPositions, simUV).rg;
-
-    // Convert UV to plane XY for positioning above terrain
-    vec2 xy = plane_xy_from_uv(particleUV, uAspect);
-
-    // For Z, sample terrain height at the current UV
-    float z = get_position_z_glsl3(uTerrainTexture, particleUV, uExaggeration);
-
+    vec2 uv = get_uv_from_vertex_id_subsampled(uGridW, uGridH, uStep);
+    vec2 xy = plane_xy_from_uv(uv, uAspect);
+    float z = get_position_z_glsl3(uTerrainTexture, uv, uExaggeration);
+    vec2 offset = get_offset_from_id(uOffsetCurr, uSimSize, gl_VertexID);
+    xy += offset;
     vId = gl_VertexID;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain, 1.0);
     gl_PointSize = uPointSize;
@@ -175,6 +172,9 @@ const UV_POINTS_VERT = `
 const UV_POINTS_FRAG = `
   precision highp float;
   flat in int vId;
+  uniform sampler2D uOffsetPrev;
+  uniform sampler2D uOffsetCurr;
+  uniform vec2 uSimSize;
   out vec4 fragColor;
   void main(){
     vec2 d = gl_PointCoord - 0.5;
@@ -196,44 +196,20 @@ precision highp float;
 in vec2 vUv;
 out vec4 fragColor;
 
-// Previous positions texture (RG = (u, v))
-uniform sampler2D uPrevPositions;
-// Simulation parameters
+uniform sampler2D uPrev;
 uniform float uDt, uSpeed, uMargin;
-uniform vec2  uSize;    // (width, height) as floats
-uniform int   uMode;    // 0 = initialize, 1+ = update
-
-// Grid info for seeding positions (subsampled uv grid)
-uniform int uGridW;
-uniform int uGridH;
-uniform int uStep;
-
-${GET_SEED_UV_FROM_INDEX_GLSL3}
+uniform vec2  uSize;   
 
 void main() {
-  // Snap to texel centers in the simulation texture
-  vec2 whf = uSize;
-  vec2 st = (floor(vUv * whf) + 0.5) / whf;
+  vec2 st = (floor(vUv * uSize) + 0.5) / uSize;
 
-  // Compute linear index for this texel
-  int ix = int(floor(vUv.x * whf.x));
-  int iy = int(floor(vUv.y * whf.y));
-  int idx = iy * int(whf.x) + ix;
+  vec2 off = texture(uPrev, st).rg;
+  off.y += uSpeed * uDt;
 
-  if (uMode == 0) {
-    // Initialize positions from subsampled UV grid
-    vec2 seedUV = get_seed_uv_from_index(idx, uGridW, uGridH, uStep);
-    fragColor = vec4(seedUV, 0.0, 1.0);
-    return;
-  }
+  float hi = 1.0 + uMargin, lo = -1.0 + uMargin;
+  if (off.y > hi) off.y = lo;
 
-  // Update: advance in +V by speed*dt, wrap with margin
-  vec2 pos = texture(uPrevPositions, st).rg;
-  pos.y += uSpeed * uDt;
-  float range = 1.0 + 2.0 * uMargin;
-  pos.y = mod(pos.y + uMargin, range) - uMargin;
-
-  fragColor = vec4(pos, 0.0, 1.0);
+  fragColor = vec4(off, 0.0, 1.0);
 }
 `;
 
@@ -258,8 +234,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const uvGeoRef = useRef<THREE.BufferGeometry | null>(null);
   const uvMatRef = useRef<THREE.ShaderMaterial | null>(null);
   const uvDimsRef = useRef<{ w: number; h: number } | null>(null);
-  const prevPosRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
-  const currPosRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const offsetPrevRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const offsetCurrRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const simDimsRef = useRef<{ w: number; h: number } | null>(null);
   const simSceneRef = useRef<THREE.Scene|null>(null);
   const simCameraRef = useRef<THREE.OrthographicCamera|null>(null);
@@ -379,13 +355,13 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         uvMatRef.current = null;
         uvTexRef.current = null;
         uvDimsRef.current = null;
-        if (prevPosRTRef.current) {
-          prevPosRTRef.current.dispose();
-          prevPosRTRef.current = null;
+        if (offsetPrevRTRef.current) {
+          offsetPrevRTRef.current.dispose();
+          offsetPrevRTRef.current = null;
         }
-        if (currPosRTRef.current) {
-          currPosRTRef.current.dispose();
-          currPosRTRef.current = null;
+        if (offsetCurrRTRef.current) {
+          offsetCurrRTRef.current.dispose();
+          offsetCurrRTRef.current = null;
         }
         simDimsRef.current = null;
       }
@@ -539,7 +515,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           const count = outW * outH;
           geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
 
-          // Create zero-initialized RG float render targets for positions (prev/curr)
+          // Create zero-initialized RG float render targets for offsets (prev/curr)
           const rtOptions: THREE.RenderTargetOptions = {
             type: THREE.FloatType,
             format: THREE.RGFormat,
@@ -565,10 +541,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           renderer.setClearColor(prevClearColor, prevClearAlpha);
 
           // Stash and expose via uniforms
-          prevPosRTRef.current?.dispose();
-          currPosRTRef.current?.dispose();
-          prevPosRTRef.current = rtPrev;
-          currPosRTRef.current = rtCurr;
+          offsetPrevRTRef.current?.dispose();
+          offsetCurrRTRef.current?.dispose();
+          offsetPrevRTRef.current = rtPrev;
+          offsetCurrRTRef.current = rtCurr;
           simDimsRef.current = { w: outW, h: outH };
 
           // Create material with required uniforms
@@ -587,9 +563,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               uGridH: { value: texH },
               uStep: { value: UV_POINTS_STEP },
               uAboveTerrain: { value: 0.1 },
-              uPositions: { value: rtPrev.texture },
-              uTexWidth: { value: outW },
-              uTexHeight: { value: outH },
+              uOffsetPrev: { value: rtPrev.texture },
+              uOffsetCurr: { value: rtCurr.texture },
+              uSimSize: { value: new THREE.Vector2(outW, outH) },
             },
           });
 
@@ -602,75 +578,21 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               vertexShader: SIM_VERT,
               fragmentShader: SIM_FRAG,
               uniforms: {
-                uPrevPositions: { value: prevPosRTRef.current.texture },
-                uDt:     { value: 0.25 },
-                uSpeed:  { value: 0.01 },
+                uPrev:   { value: offsetPrevRTRef.current.texture },
+                uDt:     { value: 0 },
+                uSpeed:  { value: 0.5 },        // NDC units per second
                 uMargin: { value: 0.02 },
-                uSize:   { value: new THREE.Vector2(outW, outH) },
-                uMode:   { value: 0 },
-                uGridW:  { value: texW },
-                uGridH:  { value: texH },
-                uStep:   { value: UV_POINTS_STEP },
+                uSize:   { value: new THREE.Vector2(outW, outH) }, // will bind as ivec2
               },
             });
             simScene.add(new THREE.Mesh(simGeom, simMat));
             simSceneRef.current  = simScene;
             simCameraRef.current = simCam;
             simMatRef.current    = simMat;
-            // Run one-time initialization pass to seed positions
-            const prevViewport = new THREE.Vector4();
-            const prevScissor  = new THREE.Vector4();
-            const prevScissorTest = renderer.getScissorTest();
-            renderer.getViewport(prevViewport);
-            renderer.getScissor(prevScissor);
-            simMat.uniforms.uMode.value = 0;
-            simMat.uniforms.uPrevPositions.value = prevPosRTRef.current.texture;
-            renderer.setRenderTarget(currPosRTRef.current);
-            renderer.setViewport(0, 0, outW, outH);
-            renderer.render(simScene, simCam);
-            renderer.setRenderTarget(null);
-            renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-            renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
-            renderer.setScissorTest(prevScissorTest);
-            // Swap so prev holds latest seeded positions; set mode to 1 for updates
-            const tmpInit = prevPosRTRef.current!;
-            prevPosRTRef.current = currPosRTRef.current!;
-            currPosRTRef.current = tmpInit;
-            simMat.uniforms.uMode.value = 1;
-            // Ensure points sample the seeded positions
-            mat.uniforms.uPositions.value = prevPosRTRef.current.texture;
-            mat.uniforms.uTexWidth.value = outW;
-            mat.uniforms.uTexHeight.value = outH;
           } else {
             // If somehow already present, at least sync uniforms
-            simMatRef.current!.uniforms.uPrevPositions.value = prevPosRTRef.current.texture;
+            simMatRef.current!.uniforms.uPrev.value = offsetPrevRTRef.current.texture;
             simMatRef.current!.uniforms.uSize.value = new THREE.Vector2(outW, outH);
-            simMatRef.current!.uniforms.uGridW.value = texW;
-            simMatRef.current!.uniforms.uGridH.value = texH;
-            simMatRef.current!.uniforms.uStep.value = UV_POINTS_STEP;
-            // One-time (re)initialization after dimensions change
-            const prevViewport = new THREE.Vector4();
-            const prevScissor  = new THREE.Vector4();
-            const prevScissorTest = renderer.getScissorTest();
-            renderer.getViewport(prevViewport);
-            renderer.getScissor(prevScissor);
-            simMatRef.current!.uniforms.uMode.value = 0;
-            simMatRef.current!.uniforms.uPrevPositions.value = prevPosRTRef.current.texture;
-            renderer.setRenderTarget(currPosRTRef.current);
-            renderer.setViewport(0, 0, outW, outH);
-            renderer.setScissorTest(false);  
-            renderer.render(simSceneRef.current!, simCameraRef.current!);
-            renderer.setRenderTarget(null);
-            renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-            renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
-            renderer.setScissorTest(prevScissorTest);
-            const tmpInit2 = prevPosRTRef.current!;
-            prevPosRTRef.current = currPosRTRef.current!;
-            currPosRTRef.current = tmpInit2;
-            simMatRef.current!.uniforms.uMode.value = 1;
-            mat.uniforms.uPositions.value = prevPosRTRef.current.texture;
-            mat.uniforms.uTexWidth.value = outW;
-            mat.uniforms.uTexHeight.value = outH;
           }
 
           const pts = new THREE.Points(geo, mat);
@@ -701,9 +623,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
             uvDimsRef.current = { w: texW, h: texH };
 
-            // Recreate and zero-initialize position render targets for new size
-            prevPosRTRef.current?.dispose();
-            currPosRTRef.current?.dispose();
+            // Recreate and zero-initialize offset render targets for new size
+            offsetPrevRTRef.current?.dispose();
+            offsetCurrRTRef.current?.dispose();
             const rtOptions: THREE.RenderTargetOptions = {
               type: THREE.FloatType,
               format: THREE.RGFormat,
@@ -727,19 +649,25 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             renderer.setRenderTarget(null);
             renderer.setClearColor(prevClearColor, prevClearAlpha);
 
-            prevPosRTRef.current = rtPrev;
-            currPosRTRef.current = rtCurr;
+            offsetPrevRTRef.current = rtPrev;
+            offsetCurrRTRef.current = rtCurr;
             simDimsRef.current = { w: outW, h: outH };
-            mat.uniforms.uPositions.value = rtPrev.texture;
-            mat.uniforms.uTexWidth.value = outW;
-            mat.uniforms.uTexHeight.value = outH;
+
+            mat.uniforms.uOffsetPrev = mat.uniforms.uOffsetPrev || { value: null };
+            mat.uniforms.uOffsetCurr = mat.uniforms.uOffsetCurr || { value: null };
+            mat.uniforms.uSimSize = mat.uniforms.uSimSize || { value: new THREE.Vector2() };
+            mat.uniforms.uOffsetPrev.value = rtPrev.texture;
+            mat.uniforms.uOffsetCurr.value = rtCurr.texture;
+            mat.uniforms.uSimSize.value = new THREE.Vector2(outW, outH);
           } else {
             // Keep uniforms in sync
-            mat.uniforms.uPositions = mat.uniforms.uPositions || { value: null };
+            mat.uniforms.uOffsetPrev = mat.uniforms.uOffsetPrev || { value: null };
+            mat.uniforms.uOffsetCurr = mat.uniforms.uOffsetCurr || { value: null };
+            mat.uniforms.uSimSize = mat.uniforms.uSimSize || { value: new THREE.Vector2() };
+            mat.uniforms.uOffsetPrev.value = offsetPrevRTRef.current ? offsetPrevRTRef.current.texture : null;
+            mat.uniforms.uOffsetCurr.value = offsetCurrRTRef.current ? offsetCurrRTRef.current.texture : null;
             const dims = simDimsRef.current || { w: Math.ceil(texW / UV_POINTS_STEP), h: Math.ceil(texH / UV_POINTS_STEP) };
-            mat.uniforms.uPositions.value = prevPosRTRef.current ? prevPosRTRef.current.texture : null;
-            mat.uniforms.uTexWidth.value = dims.w;
-            mat.uniforms.uTexHeight.value = dims.h;
+            mat.uniforms.uSimSize.value = new THREE.Vector2(dims.w, dims.h);
           }
           uvTexRef.current?.dispose();
           uvTexRef.current = texture;
@@ -812,18 +740,18 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     const simCam   = simCameraRef.current;
     const simMat   = simMatRef.current;
     const ptsMat   = uvMatRef.current;
-    const rtPrev   = prevPosRTRef.current;
-    const rtCurr   = currPosRTRef.current;
+    const rtPrev   = offsetPrevRTRef.current;
+    const rtCurr   = offsetCurrRTRef.current;
     const dims     = simDimsRef.current;
   
     if (!renderer || !scene || !camera || !controls || !simScene || !simCam || !simMat || !ptsMat || !rtPrev || !rtCurr || !dims) return;
   
-    // Use constant dt in shader; no clock needed
+    const clock = new THREE.Clock();
     let running = true;
   
     const loop = () => {
       if (!running) return;
-      // advance with constant dt via shader uniform; we still tick the clock for consistency if needed elsewhere
+      const dt = clock.getDelta();
 
       // 0) stash current viewport/scissor state
       const prevViewport = new THREE.Vector4();
@@ -833,17 +761,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       renderer.getScissor(prevScissor);     // x,y,w,h
 
       // --- SIM UPDATE: render into small RT (no feedback-loop) ---
-      simMat.uniforms.uPrevPositions.value = prevPosRTRef.current!.texture;
-      // Use constant dt = 1.0 as requested
-      simMat.uniforms.uDt.value   = 0.25;
-      // One-time initialization: if mode==0, run once then set to 1
-      if ((simMat.uniforms.uMode.value as number) === 0) {
-        simMat.uniforms.uMode.value = 0;
-      } else {
-        simMat.uniforms.uMode.value = 1;
-      }
+      simMat.uniforms.uPrev.value = offsetPrevRTRef.current!.texture;
+      simMat.uniforms.uDt.value   = dt;
 
-      renderer.setRenderTarget(currPosRTRef.current!);
+      renderer.setRenderTarget(offsetCurrRTRef.current!);
       renderer.setViewport(0, 0, dims.w, dims.h);
       // if you had scissor enabled elsewhere, either disable it or set it to match the SIM viewport
       // renderer.setScissorTest(false);
@@ -856,14 +777,12 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       renderer.setScissorTest(prevScissorTest);
 
       // --- SWAP ---
-      const tmp = prevPosRTRef.current!;
-      prevPosRTRef.current = currPosRTRef.current!;
-      currPosRTRef.current = tmp;
-
-      console.log('tmp', tmp);
+      const tmp = offsetPrevRTRef.current!;
+      offsetPrevRTRef.current = offsetCurrRTRef.current!;
+      offsetCurrRTRef.current = tmp;
 
       // make points sample the latest
-      ptsMat.uniforms.uPositions.value = prevPosRTRef.current.texture;
+      ptsMat.uniforms.uOffsetCurr.value = offsetPrevRTRef.current.texture;
 
       // --- render your visible scene as usual ---
       controls.update();
