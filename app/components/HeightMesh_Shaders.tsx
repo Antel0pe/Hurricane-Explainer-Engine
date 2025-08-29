@@ -199,11 +199,15 @@ const SIM_FRAG = `
     vec2 st = (floor(vUv * uSize) + 0.5) / uSize;
 
     vec2 position = texture(uPrev, st).rg;
-    position.y += uSpeed * uDt;
+    // position.y += uSpeed * uDt;
 
-    position.y = fract(position.y);
+    // position.y = fract(position.y);
 
-    fragColor = vec4(position, 0.0, 1.0);
+    if (texture(uPrev, st).a < 0.5) {
+      fragColor = vec4(1, 1, 0.0, 1.0);
+    } else {
+      fragColor = vec4(0, 0, 0, 0.4);
+    }
 }
 `;
 
@@ -512,7 +516,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           // Create zero-initialized RG float render targets for offsets (prev/curr)
           const rtOptions: THREE.RenderTargetOptions = {
             type: THREE.FloatType,
-            format: THREE.RGFormat,
+            format: THREE.RGBAFormat,
             minFilter: THREE.NearestFilter,
             magFilter: THREE.NearestFilter,
             wrapS: THREE.ClampToEdgeWrapping,
@@ -522,6 +526,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           };
           const rtRead = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
           const rtWrite = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
+          rtRead.texture.generateMipmaps = false;
+          rtWrite.texture.generateMipmaps = false;
 
           // Clear both to zeros
           const prevClearColor = renderer.getClearColor(new THREE.Color()).clone();
@@ -620,7 +626,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             writePositionRTRef.current?.dispose();
             const rtOptions: THREE.RenderTargetOptions = {
               type: THREE.FloatType,
-              format: THREE.RGFormat,
+              format: THREE.RGBAFormat,
               minFilter: THREE.NearestFilter,
               magFilter: THREE.NearestFilter,
               wrapS: THREE.ClampToEdgeWrapping,
@@ -630,6 +636,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             };
             const rtRead = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
             const rtWrite = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
+            rtRead.texture.generateMipmaps = false;
+            rtWrite.texture.generateMipmaps = false;
 
             const prevClearColor = renderer.getClearColor(new THREE.Color()).clone();
             const prevClearAlpha = renderer.getClearAlpha();
@@ -752,6 +760,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
       renderer.setRenderTarget(writePositionRTRef.current!);
       renderer.setViewport(0, 0, dims.w, dims.h);
+      renderer.clearColor();
       // if you had scissor enabled elsewhere, either disable it or set it to match the SIM viewport
       // renderer.setScissorTest(false);
       renderer.render(simScene, simCam);
