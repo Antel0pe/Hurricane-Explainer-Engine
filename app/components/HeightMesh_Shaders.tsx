@@ -196,12 +196,13 @@ const SIM_FRAG = `
   uniform vec2  uSize;   
 
   void main() {
-    vec2 st = (floor(vUv * uSize) + 0.5) / uSize;
+    vec2 st = (gl_FragCoord.xy - 0.5) / uSize;
+    // vec2 st = (floor(vUv * uSize) + 0.5) / uSize;
 
     vec2 position = texture(uPrev, st).rg;
-    // position.y += uSpeed * uDt;
+    position.y += uSpeed * uDt;
 
-    // position.y = fract(position.y);
+    position.y = fract(position.y);
 
     if (texture(uPrev, st).a == 0.0) {
       position.x = st.x;
@@ -765,12 +766,17 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
       simMat.uniforms.uDt.value   = dt;
 
+      const rt = writePositionRTRef.current!;
       renderer.setRenderTarget(writePositionRTRef.current!);
       renderer.setViewport(0, 0, outWRef.current, outHRef.current);
-      renderer.clearColor();
-      // if you had scissor enabled elsewhere, either disable it or set it to match the SIM viewport
-      // renderer.setScissorTest(false);
+      renderer.clear();
+      renderer.setScissorTest(false);
       renderer.render(simScene, simCam);
+
+      if (rt.width !== outWRef.current || rt.height !== outHRef.current) {
+        console.warn('RT size mismatch', rt.width, rt.height, outWRef.current, outHRef.current);
+      }
+      console.log(rt.height, rt.width)
       renderer.setRenderTarget(null);
 
       // 1) restore viewport/scissor EXACTLY as they were
