@@ -203,11 +203,14 @@ const SIM_FRAG = `
 
     // position.y = fract(position.y);
 
-    if (texture(uPrev, st).a < 0.5) {
-      fragColor = vec4(1, 1, 0.0, 1.0);
-    } else {
-      fragColor = vec4(0, 0, 0, 0.4);
+    if (texture(uPrev, st).a == 0.0) {
+      position.x = st.x;
+      position.y = st.y;
+      fragColor = vec4(position, 0.0, 1);
+      return;
     }
+
+    fragColor = vec4(position, 0.0, texture(uPrev, st).a);
 }
 `;
 
@@ -238,6 +241,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const simSceneRef = useRef<THREE.Scene|null>(null);
   const simCameraRef = useRef<THREE.OrthographicCamera|null>(null);
   const simMatRef   = useRef<THREE.ShaderMaterial|null>(null);
+  const outWRef = useRef<number>(0);
+  const outHRef = useRef<number>(0);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -510,6 +515,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           const geo = new THREE.BufferGeometry();
           const outW = Math.ceil(texW / UV_POINTS_STEP);
           const outH = Math.ceil(texH / UV_POINTS_STEP);
+          outWRef.current = outW;
+          outHRef.current = outH;
           const count = outW * outH;
           geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
 
@@ -759,7 +766,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       simMat.uniforms.uDt.value   = dt;
 
       renderer.setRenderTarget(writePositionRTRef.current!);
-      renderer.setViewport(0, 0, dims.w, dims.h);
+      renderer.setViewport(0, 0, outWRef.current, outHRef.current);
       renderer.clearColor();
       // if you had scissor enabled elsewhere, either disable it or set it to match the SIM viewport
       // renderer.setScissorTest(false);
@@ -778,6 +785,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
       // make points sample the latest
       ptsMat.uniforms.uCurrentPosition.value = readPositionRTRef.current.texture;
+      console.log(readRTFloats(renderer, readPositionRTRef.current.texture))
 
       // --- render your visible scene as usual ---
       controls.update();
@@ -794,6 +802,14 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     uvDimsRef.current?.w,
     uvDimsRef.current?.h,
   ]);
+  
+  function readRTFloats(renderer: THREE.WebGLRenderer, texOrRT: THREE.Texture | THREE.WebGLRenderTarget) {
+    const rt = texOrRT.isRenderTargetTexture ? texOrRT.renderTarget : texOrRT;
+    const { width: W, height: H } = rt;
+    const buf = new Float32Array(W * H * 4); // RGBA
+    renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
+    return { W, H, buf };
+  }
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;
