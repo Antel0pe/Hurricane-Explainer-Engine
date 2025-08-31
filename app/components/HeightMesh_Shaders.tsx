@@ -194,6 +194,9 @@ const SIM_FRAG = `
   uniform sampler2D uPrev;
   uniform float uDt, uSpeed;
   uniform vec2  uSize;
+  uniform sampler2D uWindTexture;
+
+  const float WIND_GAIN = 0.05;
   const float L_TARGET = 0.5;
 
   void main() {
@@ -201,10 +204,14 @@ const SIM_FRAG = `
 
     vec4 prev = texture(uPrev, st);
     vec2 position = prev.rg;
-    position.y += uSpeed * uDt;
-    position.y = fract(position.y);
 
-    float stepDist = abs(uSpeed) * uDt;
+    vec2 particlePositionUV = texture(uWindTexture, position).rg;
+    vec2 wind = vec2(particlePositionUV.r * 2.0 - 1.0, -(particlePositionUV.g * 2.0 - 1.0));
+    vec2 windUVSpeed = wind * WIND_GAIN;
+    position = fract(position + windUVSpeed * uDt);
+
+    float particleTotalSpeed = length(windUVSpeed);
+    float stepDist = particleTotalSpeed * uDt;
     float life = prev.a;
     life -= stepDist / L_TARGET;
 
@@ -592,6 +599,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
                 uDt:     { value: 0 },
                 uSpeed:  { value: 0.5 },        // NDC units per second
                 uSize:   { value: new THREE.Vector2(outW, outH) }, // will bind as ivec2
+                uWindTexture: { value: texture }
               },
             });
             simScene.add(new THREE.Mesh(simGeom, simMat));
