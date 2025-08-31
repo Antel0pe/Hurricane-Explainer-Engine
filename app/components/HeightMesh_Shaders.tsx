@@ -186,33 +186,74 @@ void main() {
 }
 `;
 
+// const SIM_FRAG = `
+//   precision highp float;
+//   in vec2 vUv;
+//   out vec4 fragColor;
+
+//   uniform sampler2D uPrev;
+//   uniform float uDt, uSpeed;
+//   uniform vec2  uSize;
+//   float L_TARGET = 0.35;
+
+//   void main() {
+//     vec2 st = (gl_FragCoord.xy - 0.5) / uSize;
+
+//     vec4 prev = texture(uPrev, st);
+//     vec2 position = prev.rg;
+//     position.y += uSpeed * uDt;
+//     position.y = fract(position.y);
+
+//     float stepDist = abs(uSpeed) * uDt;
+//     float life = prev.a;
+//     life -= stepDist / L_TARGET;
+
+//     if (life <= 0.0) {
+//       position = st
+//       life = stepDist
+//     }
+
+//     fragColor = vec4(position, 0.0, life);
+// }
+// `;
+
 const SIM_FRAG = `
+const float L_TARGET = 1;
   precision highp float;
   in vec2 vUv;
   out vec4 fragColor;
 
   uniform sampler2D uPrev;
   uniform float uDt, uSpeed;
-  uniform vec2  uSize;   
+  uniform vec2  uSize;
 
   void main() {
     vec2 st = (gl_FragCoord.xy - 0.5) / uSize;
 
-    vec2 position = texture(uPrev, st).rg;
-    position.y += uSpeed * uDt;
+    vec4 prev = texture(uPrev, st);
+    vec2 position = prev.rg;
 
+    // --- per-step "distance traveled" in your toy setup (moving only in +Y) ---
+    float stepDist = abs(uSpeed) * uDt;  // UV-units per step
+
+    // --- decrement remaining distance budget stored in A ---
+    float life = prev.a;
+    life -= stepDist / L_TARGET;
+
+    // --- move, wrap ---
+    position.y += uSpeed * uDt;
     position.y = fract(position.y);
 
-    if (texture(uPrev, st).a == 0.0) {
-      position.x = st.x;
-      position.y = st.y;
-      fragColor = vec4(position, 0.0, 1);
-      return;
+    // --- (re)spawn on first init (life was 0) OR when budget exhausted ---
+    if (life <= 0.0) {
+      position = st;          // reset to this texel's spawn
+      life = stepDist;        // seed a fresh budget so it's not zero next frame
     }
 
-    fragColor = vec4(position, 0.0, texture(uPrev, st).a);
-}
+    fragColor = vec4(position, 0.0, life);
+  }
 `;
+
 
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number };
