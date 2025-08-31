@@ -197,7 +197,6 @@ const SIM_FRAG = `
 
   void main() {
     vec2 st = (gl_FragCoord.xy - 0.5) / uSize;
-    // vec2 st = (floor(vUv * uSize) + 0.5) / uSize;
 
     vec2 position = texture(uPrev, st).rg;
     position.y += uSpeed * uDt;
@@ -772,11 +771,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       renderer.clear();
       renderer.setScissorTest(false);
       renderer.render(simScene, simCam);
-
-      if (rt.width !== outWRef.current || rt.height !== outHRef.current) {
-        console.warn('RT size mismatch', rt.width, rt.height, outWRef.current, outHRef.current);
-      }
-      console.log(rt.height, rt.width)
       renderer.setRenderTarget(null);
 
       // 1) restore viewport/scissor EXACTLY as they were
@@ -791,7 +785,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
       // make points sample the latest
       ptsMat.uniforms.uCurrentPosition.value = readPositionRTRef.current.texture;
-      console.log(readRTFloats(renderer, readPositionRTRef.current.texture))
 
       // --- render your visible scene as usual ---
       controls.update();
@@ -808,14 +801,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     uvDimsRef.current?.w,
     uvDimsRef.current?.h,
   ]);
-  
-  function readRTFloats(renderer: THREE.WebGLRenderer, texOrRT: THREE.Texture | THREE.WebGLRenderTarget) {
-    const rt = texOrRT.isRenderTargetTexture ? texOrRT.renderTarget : texOrRT;
-    const { width: W, height: H } = rt;
-    const buf = new Float32Array(W * H * 4); // RGBA
-    renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
-    return { W, H, buf };
-  }
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;

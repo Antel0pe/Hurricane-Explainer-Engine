@@ -243,23 +243,25 @@ def create_app() -> Flask:
     # Enable CORS for all origins and expose custom headers used by the client
     CORS(app, resources={r"/*": {"origins": "*"}}, expose_headers=["X-Bounds", "X-Size"]) 
 
-    data_path = resolve_data_path()
-    ds = open_era5_dataset(data_path)
-    z500_da = select_z500(ds)
+    # data_path = resolve_data_path()
+    # ds = open_era5_dataset(data_path)
+    # z500_da = select_z500(ds)
 
-    # Determine the time coordinate key once (prefer the indexable 'time')
-    if "time" in z500_da.dims or "time" in z500_da.coords:
-        time_coord = "time"
-    elif "valid_time" in z500_da.coords:
-        time_coord = "valid_time"
-    else:
-        raise KeyError("No time coordinate found (expected 'time' or 'valid_time')")
+    # # Determine the time coordinate key once (prefer the indexable 'time')
+    # if "time" in z500_da.dims or "time" in z500_da.coords:
+    #     time_coord = "time"
+    # elif "valid_time" in z500_da.coords:
+    #     time_coord = "valid_time"
+    # else:
+    #     raise KeyError("No time coordinate found (expected 'time' or 'valid_time')")
 
-    # Freeze lat/lon for bounds; arrays are 1D if regular grid
-    lat = z500_da.latitude.values if "latitude" in z500_da.coords else None
-    lon = z500_da.longitude.values if "longitude" in z500_da.coords else None
-    if lat is None or lon is None:
-        raise KeyError("Expected 'latitude' and 'longitude' coordinates in dataset")
+    # # Freeze lat/lon for bounds; arrays are 1D if regular grid
+    # lat = z500_da.latitude.values if "latitude" in z500_da.coords else None
+    # lon = z500_da.longitude.values if "longitude" in z500_da.coords else None
+    # if lat is None or lon is None:
+    #     raise KeyError("Expected 'latitude' and 'longitude' coordinates in dataset")
+    lat = np.arange(90, -90.0001, -0.25)
+    lon = np.arange(0, 360, 0.25)
 
     @app.get("/gph/<datehour>")
     def gph(datehour: str):
