@@ -434,6 +434,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             },
             vertexShader: VERT,
             fragmentShader: FRAG,
+            side: THREE.DoubleSide,
           });
           const mesh = new THREE.Mesh(geo, mat);
           scene.add(mesh);
