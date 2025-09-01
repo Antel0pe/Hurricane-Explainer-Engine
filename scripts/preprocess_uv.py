@@ -100,23 +100,16 @@ def encode_uv_rg_png(u: np.ndarray, v: np.ndarray) -> bytes:
     return buf.read()
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Preprocess 500 hPa U/V into RG PNGs (U->R, V->G)")
-    p.add_argument("--only", help="Process only this YYYYMMDDHH timestamp")
-    p.add_argument("--start", help="Start YYYYMMDDHH (inclusive)")
-    p.add_argument("--end", help="End YYYYMMDDHH (inclusive)")
-    p.add_argument("--force", action="store_true", help="Overwrite existing images")
-    p.add_argument("--delete", action="store_true", help="Delete images for selected times instead of writing")
-    return p.parse_args()
-
-
 def main():
-    _, _, grib_path, out_dir = resolve_paths()
+    pressureLevel = 500
+    grib_path = "."
+    out_dir = "../data/uv_images/{pressureLevel}"
+    # _, _, grib_path, out_dir = resolve_paths()
     ds = open_dataset(grib_path)
 
     # Select 500 hPa components
-    u_da = select_level_component(ds, "u", 500)
-    v_da = select_level_component(ds, "v", 500)
+    u_da = select_level_component(ds, "u", pressureLevel)
+    v_da = select_level_component(ds, "v", pressureLevel)
 
     # Determine time coordinate
     if "time" in u_da.dims or "time" in u_da.coords:
@@ -137,31 +130,17 @@ def main():
         print("No time steps found in dataset")
         return
 
-    # Determine selected times from args
-    args = parse_args()
-
-    def to_np_dt(s: str) -> np.datetime64:
-        return np.datetime64(datetime.strptime(s, "%Y%m%d%H"))
-
-    selected_times = times
-    if args.only:
-        target = to_np_dt(args.only)
-        # Keep exact match if present; else nearest
-        try:
-            _ = np.where(times == target)[0][0]
-            selected_times = np.array([target])
-        except IndexError:
-            # Fall back to nearest
-            diffs = np.abs(times.astype("datetime64[h]") - target)
-            idx = int(np.argmin(diffs))
-            selected_times = np.array([times[idx]])
-    else:
-        if args.start:
-            start_np = to_np_dt(args.start)
-            selected_times = selected_times[selected_times >= start_np]
-        if args.end:
-            end_np = to_np_dt(args.end)
-            selected_times = selected_times[selected_times <= end_np]
+    # --- Happy path: fixed date window, hourly, inclusive ---
+    start_np = np.datetime64("2017-08-01T00")
+    end_np   = np.datetime64("2017-09-30T23")
+    mask = (times >= start_np) & (times <= end_np)
+    selected_times = times[mask]
+    if selected_times.size == 0:
+        t0 = np.datetime_as_string(times[0], unit="h")
+        tN = np.datetime_as_string(times[-1], unit="h")
+        print(f"No times within happy-path window (2017-08-01T00 .. 2017-09-30T23). "
+              f"Dataset range is {t0} .. {tN}")
+        return
 
     t0 = np.datetime_as_string(times[0], unit="h")
     tN = np.datetime_as_string(times[-1], unit="h")
@@ -179,18 +158,6 @@ def main():
     for idx, t in enumerate(selected_times, start=1):
         ts = np.datetime_as_string(t, unit="h").replace("-", "").replace(":", "").replace("T", "")
         png_path = os.path.join(out_dir, f"uv_{ts}.png")
-
-        if args.delete:
-            if os.path.exists(png_path):
-                os.remove(png_path)
-                if idx % 50 == 0 or idx == total:
-                    print(f"[{idx}/{total}] Deleted {os.path.basename(png_path)}")
-            continue
-
-        if (not args.force) and os.path.exists(png_path):
-            if idx % 100 == 0:
-                print(f"[{idx}/{total}] Exists, skipping: {os.path.basename(png_path)}")
-            continue
 
         # Extract slices
         u_sl = u_da.sel({time_coord: np.datetime64(t)})

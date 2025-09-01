@@ -11,13 +11,13 @@ from PIL import Image
 STANDARD_GRAVITY_M_PER_S2: float = 9.80665
 
 
-def resolve_paths():
+def resolve_paths(pressureLevel):
     """Return absolute paths for project root, data dir, grib path, and output dir."""
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.abspath(os.path.join(here, os.pardir))
     data_dir = os.path.join(root, "data")
     grib_path = os.path.join(data_dir, "data.grib")
-    out_dir = os.path.join(data_dir, "gphImages")
+    out_dir = os.path.join(data_dir, "gphImages", pressureLevel)
     os.makedirs(out_dir, exist_ok=True)
     return root, data_dir, grib_path, out_dir
 
@@ -28,15 +28,15 @@ def open_era5_dataset(path: str) -> xr.Dataset:
     return xr.open_dataset(path, engine="cfgrib")
 
 
-def select_z500(era5_ds: xr.Dataset) -> xr.DataArray:
+def select_gph_z(era5_ds: xr.Dataset, pressureLevel) -> xr.DataArray:
     if "z" not in era5_ds.variables:
         raise KeyError("Variable 'z' (geopotential) not found in dataset")
     z_da = era5_ds["z"]
     dims = set(z_da.dims)
     if "isobaricInhPa" in dims:
-        da = z_da.sel(isobaricInhPa=500)
+        da = z_da.sel(isobaricInhPa=pressureLevel)
     elif "level" in dims:
-        da = z_da.sel(level=500)
+        da = z_da.sel(level=pressureLevel)
     else:
         da = z_da
     if "latitude" in da.coords and da.latitude.ndim == 1 and np.any(np.diff(da.latitude.values) < 0):
@@ -85,22 +85,25 @@ def encode_terrain_rgb_png(elev_m: np.ndarray, lat: np.ndarray, lon: np.ndarray)
 
 
 def main():
-    _, _, grib_path, out_dir = resolve_paths()
+    pressureLevel = 500
+    grib_path = "."
+    out_dir = "../data/gphImages/{pressureLevel}"
+    # _, _, _, out_dir = resolve_paths(pressureLevel)
 
     ds = open_era5_dataset(grib_path)
-    z500_da = select_z500(ds)
+    gphZ_data = select_gph_z(ds, pressureLevel)
 
-    if "time" in z500_da.dims or "time" in z500_da.coords:
+    if "time" in gphZ_data.dims or "time" in gphZ_data.coords:
         time_coord = "time"
-    elif "valid_time" in z500_da.coords:
+    elif "valid_time" in gphZ_data.coords:
         time_coord = "valid_time"
     else:
         raise KeyError("No time coordinate found (expected 'time' or 'valid_time')")
 
-    lat = z500_da.latitude.values
-    lon = z500_da.longitude.values
+    lat = gphZ_data.latitude.values
+    lon = gphZ_data.longitude.values
 
-    times = z500_da[time_coord].values
+    times = gphZ_data[time_coord].values
     t0 = np.datetime_as_string(times[0], unit="h")
     tN = np.datetime_as_string(times[-1], unit="h")
     print(f"Dataset time range: {t0} .. {tN}")
@@ -122,7 +125,7 @@ def main():
                 print(f"[{idx}/{total}] Exists, skipping: {os.path.basename(png_path)}")
             continue
 
-        slice_da = (z500_da.sel({time_coord: np.datetime64(t)}) / STANDARD_GRAVITY_M_PER_S2)
+        slice_da = (gphZ_data.sel({time_coord: np.datetime64(t)}) / STANDARD_GRAVITY_M_PER_S2)
         elev_m = slice_da.values.astype(np.float32)
 
         lon_fixed, elev_fixed = to_minus180_180(lon, elev_m)
