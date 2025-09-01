@@ -83,14 +83,14 @@ export default function TimeSlider({value, onChange}: TimeSliderProps) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(document.activeElement)) return;
-      if (e.key === "a" || e.key === "ArrowLeft") {
+      if (e.key === "ArrowLeft") {
         if (!held.left) {
           held.left = true;
           step(-1);
         }
         startTimer();
         e.preventDefault();
-      } else if (e.key === "d" || e.key === "ArrowRight") {
+      } else if (e.key === "ArrowRight") {
         if (!held.right) {
           held.right = true;
           step(1);

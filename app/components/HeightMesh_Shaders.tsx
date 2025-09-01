@@ -254,135 +254,204 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const simMatRef   = useRef<THREE.ShaderMaterial|null>(null);
   const outWRef = useRef<number>(0);
   const outHRef = useRef<number>(0);
+  const hasSetCameraPosition = useRef(false);
+
 
   useEffect(() => {
-    const host = hostRef.current!;
-    const getSize = () => {
-      const r = host.getBoundingClientRect();
-      return { w: Math.max(1, r.width), h: Math.max(1, r.height) };
-      };
-    const { w, h } = getSize();
+  const host = hostRef.current!;
+  const getSize = () => {
+    const r = host.getBoundingClientRect();
+    return { w: Math.max(1, r.width), h: Math.max(1, r.height) };
+  };
+  const { w, h } = getSize();
 
-    // --- renderer / scene / camera ---
-    const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2 });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio ?? 1, 2));
-    renderer.setSize(w, h);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    host.appendChild(renderer.domElement);
+  // --- renderer / scene / camera ---
+  const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2 });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio ?? 1, 2));
+  renderer.setSize(w, h);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  host.appendChild(renderer.domElement);
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf7f9fc);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xf7f9fc);
 
-    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1e9);
-    camera.up.set(0, 0, 1);
+  const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1e9);
+  camera.up.set(0, 0, 1);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(1.5, 1.0, 2.0).multiplyScalar(1000);
-    scene.add(sun);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(1.5, 1.0, 2.0).multiplyScalar(1000);
+  scene.add(sun);
 
-    let stopped = false;
+  let stopped = false;
 
-    // --- render-on-demand (guarded; no recursive re-entry) ---
-    let rafId: number | null = null;
-    let animating = false;
+  // --- render-on-demand (guarded; no recursive re-entry) ---
+  let rafId: number | null = null;
+  let animating = false;
 
-    const render = () => renderer.render(scene, camera);
+  const render = () => renderer.render(scene, camera);
 
-    const startDampedRAF = () => {
-      if (stopped || animating) return; // start only once
-      animating = true;
+  const startDampedRAF = () => {
+    if (stopped || animating) return; // start only once
+    animating = true;
 
-      const tick = () => {
-        if (stopped) return;
-        const needsUpdate = controls.update(); // may emit 'change'
-        render();
-        if (needsUpdate) {
-          rafId = requestAnimationFrame(tick);
-        } else {
-          animating = false;
-          rafId = null;
-        }
-      };
-
-      tick();
-    };
-
-    const renderOnce = () => {
+    const tick = () => {
       if (stopped) return;
+      const needsUpdate = controls.update(); // may emit 'change'
       render();
+      if (needsUpdate) {
+        rafId = requestAnimationFrame(tick);
+      } else {
+        animating = false;
+        rafId = null;
+      }
     };
 
-    controls.addEventListener("start", startDampedRAF);
-    controls.addEventListener("end", renderOnce);
-    controls.addEventListener("change", () => {
-      // If damping loop isn't running, at least render this change once.
-      if (!animating) renderOnce();
-    });
+    tick();
+  };
 
-    // Initial render (no mesh yet)
+  const renderOnce = () => {
+    if (stopped) return;
+    render();
+  };
+
+  controls.addEventListener("start", startDampedRAF);
+  controls.addEventListener("end", renderOnce);
+  controls.addEventListener("change", () => {
+    // If damping loop isn't running, at least render this change once.
+    if (!animating) renderOnce();
+  });
+
+  // ------------------ keyboard movement (WASD/Arrows on XY, Q/E on Z) ------------------
+  const pressed = new Set<string>();
+  let moving = false;
+  let lastT = performance.now();
+  const SPEED = 2; // world units/sec; adjust to taste
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const k = e.key.toLowerCase();
+    pressed.add(k);
+    startMoveLoop();
+  };
+  const onKeyUp = (e: KeyboardEvent) => {
+    pressed.delete(e.key.toLowerCase());
+  };
+
+  function startMoveLoop() {
+    if (moving) return;
+    moving = true;
+    lastT = performance.now();
+
+    const step = () => {
+      if (!moving) return;
+      if (pressed.size === 0) { moving = false; return; }
+
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - lastT) / 1000);
+      lastT = now;
+
+      // Forward relative to camera facing, clamped to XY (Z is up)
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      fwd.z = 0;
+      if (fwd.lengthSq() > 0) fwd.normalize();
+
+      // Right = 90° about +Z
+      const right = new THREE.Vector3(fwd.y, -fwd.x, 0).normalize();
+
+      const move = new THREE.Vector3();
+      if (pressed.has('w')) move.add(fwd);
+      if (pressed.has('s')) move.sub(fwd);
+      if (pressed.has('d')) move.add(right);
+      if (pressed.has('a')) move.sub(right);
+      if (pressed.has('q')) move.z += 1;
+      if (pressed.has('e')) move.z -= 1;
+
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(SPEED * dt);
+        camera.position.add(move);
+        controls.target.add(move); // keep orbit pivot with the camera
+        startDampedRAF(); // keep your damped render loop alive while moving
+      }
+
+      requestAnimationFrame(step);
+    };
+
+    requestAnimationFrame(step);
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  // ---------------- end keyboard movement ----------------
+
+  // Initial render (no mesh yet)
+  renderOnce();
+
+  // Resize to parent
+  const ro = new ResizeObserver(() => {
+    const { w, h } = getSize();
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
     renderOnce();
+  });
+  ro.observe(host);
 
-    // Resize to parent
-    const ro = new ResizeObserver(() => {
-      const { w, h } = getSize();
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderOnce();
-    });
-    ro.observe(host);
+  // Stash refs for reuse
+  rendererRef.current = renderer;
+  sceneRef.current = scene;
+  cameraRef.current = camera;
+  controlsRef.current = controls;
+  sunRef.current = sun;
+  roRef.current = ro;
 
-    // Stash refs for reuse
-    rendererRef.current = renderer;
-    sceneRef.current = scene;
-    cameraRef.current = camera;
-    controlsRef.current = controls;
-    sunRef.current = sun;
-    roRef.current = ro;
+  // Cleanup
+  return () => {
+    stopped = true;
+    if (rafId != null) cancelAnimationFrame(rafId);
+    ro.disconnect();
+    controls.dispose();
 
-    // Cleanup
-    return () => {
-      stopped = true;
-      if (rafId != null) cancelAnimationFrame(rafId);
-      ro.disconnect();
-      controls.dispose();
-      if (meshRef.current) {
-        (meshRef.current.geometry as THREE.BufferGeometry).dispose();
-        const m = meshRef.current.material as THREE.ShaderMaterial;
-        const tex = m.uniforms?.uTexture?.value as THREE.Texture | undefined;
-        if (tex) tex.dispose();
-        m.dispose();
-        meshRef.current = null;
+    window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+
+    if (meshRef.current) {
+      (meshRef.current.geometry as THREE.BufferGeometry).dispose();
+      const m = meshRef.current.material as THREE.ShaderMaterial;
+      const tex = m.uniforms?.uTexture?.value as THREE.Texture | undefined;
+      if (tex) tex.dispose();
+      m.dispose();
+      meshRef.current = null;
+    }
+    if (uvPointsRef.current) {
+      if (uvGeoRef.current) uvGeoRef.current.dispose();
+      if (uvMatRef.current) uvMatRef.current.dispose();
+      if (uvTexRef.current) uvTexRef.current.dispose();
+      uvPointsRef.current = null;
+      uvGeoRef.current = null;
+      uvMatRef.current = null;
+      uvTexRef.current = null;
+      uvDimsRef.current = null;
+      if (readPositionRTRef.current) {
+        readPositionRTRef.current.dispose();
+        readPositionRTRef.current = null;
       }
-      if (uvPointsRef.current) {
-        if (uvGeoRef.current) uvGeoRef.current.dispose();
-        if (uvMatRef.current) uvMatRef.current.dispose();
-        if (uvTexRef.current) uvTexRef.current.dispose();
-        uvPointsRef.current = null;
-        uvGeoRef.current = null;
-        uvMatRef.current = null;
-        uvTexRef.current = null;
-        uvDimsRef.current = null;
-        if (readPositionRTRef.current) {
-          readPositionRTRef.current.dispose();
-          readPositionRTRef.current = null;
-        }
-        if (writePositionRTRef.current) {
-          writePositionRTRef.current.dispose();
-          writePositionRTRef.current = null;
-        }
-        simDimsRef.current = null;
+      if (writePositionRTRef.current) {
+        writePositionRTRef.current.dispose();
+        writePositionRTRef.current = null;
       }
-      renderer.dispose();
-      if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
-    };
-  }, []);
+      simDimsRef.current = null;
+    }
+    renderer.dispose();
+    if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
+  };
+}, []);
+
 
   // Load/replace texture and update or create the mesh when pngUrl changes
   useEffect(() => {
@@ -457,22 +526,25 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           (mesh.geometry as THREE.BufferGeometry).dispose();
           mesh.geometry = newGeo;
         }
+        if (!hasSetCameraPosition.current) {
+            const sphere = new THREE.Sphere();
+            new THREE.Box3().setFromObject(meshRef.current!).getBoundingSphere(sphere);
+            const fov = THREE.MathUtils.degToRad(camera.fov);
+            const dist = sphere.radius / Math.sin(fov / 2);
+            camera.position.set(
+            sphere.center.x,
+            sphere.center.y - dist * 0.2,
+            sphere.center.z + sphere.radius * 2
+            );
+            camera.near = Math.max(0.1, dist * 0.001);
+            camera.far = dist * 10;
+            camera.updateProjectionMatrix();
+            camera.lookAt(sphere.center);
+            controls.target.copy(sphere.center);
+            controls.update();
 
-        const sphere = new THREE.Sphere();
-        new THREE.Box3().setFromObject(meshRef.current!).getBoundingSphere(sphere);
-        const fov = THREE.MathUtils.degToRad(camera.fov);
-        const dist = sphere.radius / Math.sin(fov / 2);
-        camera.position.set(
-          sphere.center.x,
-          sphere.center.y - dist * 0.2,
-          sphere.center.z + sphere.radius * 2
-        );
-        camera.near = Math.max(0.1, dist * 0.001);
-        camera.far = dist * 10;
-        camera.updateProjectionMatrix();
-        camera.lookAt(sphere.center);
-        controls.target.copy(sphere.center);
-        controls.update();
+            hasSetCameraPosition.current = true;
+        }
 
         renderer.render(scene, camera);
       },
