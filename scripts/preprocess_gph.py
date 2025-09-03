@@ -86,8 +86,8 @@ def encode_terrain_rgb_png(elev_m: np.ndarray, lat: np.ndarray, lon: np.ndarray)
 
 def main():
     pressureLevel = 500
-    grib_path = "."
-    out_dir = "../data/gphImages/{pressureLevel}"
+    grib_path = "E:/datasets/era5-250,500,850,uv.grib"
+    out_dir = f"E:/datasets/gphImages/{pressureLevel}"
     # _, _, _, out_dir = resolve_paths(pressureLevel)
 
     ds = open_era5_dataset(grib_path)
