@@ -26,7 +26,7 @@ def resolve_gph_image_dir() -> str:
     """Resolve absolute path to data/gphImages relative to this file."""
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.abspath(os.path.join(here, os.pardir))
-    out_dir = os.path.join(root, "data", "gphImages")
+    out_dir = os.path.join(root, "data", "gphImages/250")
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
 

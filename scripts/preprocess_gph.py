@@ -85,9 +85,10 @@ def encode_terrain_rgb_png(elev_m: np.ndarray, lat: np.ndarray, lon: np.ndarray)
 
 
 def main():
-    pressureLevel = 500
-    grib_path = "E:/datasets/era5-250,500,850,uv.grib"
-    out_dir = f"E:/datasets/gphImages/{pressureLevel}"
+    pressureLevel = 250
+    grib_path = "C:/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data.grib"
+    out_dir = f"C:/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data/gphImages/{pressureLevel}"
+    os.makedirs(out_dir, exist_ok=True)
     # _, _, _, out_dir = resolve_paths(pressureLevel)
 
     ds = open_era5_dataset(grib_path)
@@ -120,11 +121,15 @@ def main():
         # Format YYYYMMDDHH
         ts = np.datetime_as_string(t, unit="h").replace("-", "").replace(":", "").replace("T", "")
         png_path = os.path.join(out_dir, f"gph_{ts}.png")
-        if os.path.exists(png_path):
-            if idx % 100 == 0:
-                print(f"[{idx}/{total}] Exists, skipping: {os.path.basename(png_path)}")
-            continue
-
+        # if os.path.exists(png_path):
+            # if idx % 100 == 0:
+                # print(f"[{idx}/{total}] Exists, skipping: {os.path.basename(png_path)}")
+            # continue
+        print('---------------')
+        print(np.datetime64(t))
+        print(STANDARD_GRAVITY_M_PER_S2)
+        print((gphZ_data.sel({time_coord: np.datetime64(t)})))
+        print(type(gphZ_data.sel({time_coord: np.datetime64(t)})))
         slice_da = (gphZ_data.sel({time_coord: np.datetime64(t)}) / STANDARD_GRAVITY_M_PER_S2)
         elev_m = slice_da.values.astype(np.float32)
 
