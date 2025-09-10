@@ -6,8 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint",
-    "postinstall": "node scripts/copy-cesium.js"
+    "lint": "eslint"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.14",
