@@ -85,9 +85,9 @@ def encode_terrain_rgb_png(elev_m: np.ndarray, lat: np.ndarray, lon: np.ndarray)
 
 
 def main():
-    pressureLevel = 250
-    grib_path = "C:/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data.grib"
-    out_dir = f"C:/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data/gphImages/{pressureLevel}"
+    pressureLevel = 850
+    grib_path = "/mnt/c/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data.grib"
+    out_dir = f"/mnt/c/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data/gphImages/{pressureLevel}"
     os.makedirs(out_dir, exist_ok=True)
     # _, _, _, out_dir = resolve_paths(pressureLevel)
 
@@ -125,11 +125,6 @@ def main():
             # if idx % 100 == 0:
                 # print(f"[{idx}/{total}] Exists, skipping: {os.path.basename(png_path)}")
             # continue
-        print('---------------')
-        print(np.datetime64(t))
-        print(STANDARD_GRAVITY_M_PER_S2)
-        print((gphZ_data.sel({time_coord: np.datetime64(t)})))
-        print(type(gphZ_data.sel({time_coord: np.datetime64(t)})))
         slice_da = (gphZ_data.sel({time_coord: np.datetime64(t)}) / STANDARD_GRAVITY_M_PER_S2)
         elev_m = slice_da.values.astype(np.float32)
 
