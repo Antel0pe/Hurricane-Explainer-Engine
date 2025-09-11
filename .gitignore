@@ -13,6 +13,8 @@
 public/cesium/
 
 data/
+*.grib*
+*.nc
 
 */venv
 # testing
