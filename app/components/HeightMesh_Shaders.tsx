@@ -406,6 +406,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       if (pressed.has('a')) move.sub(right);
       if (pressed.has('q')) move.z += 1;
       if (pressed.has('e')) move.z -= 1;
+      // Space for up, Shift for down
+      if (pressed.has(' ')) move.z += 1;
+      if (pressed.has('shift')) move.z -= 1;
 
       if (move.lengthSq() > 0) {
         move.normalize().multiplyScalar(SPEED * dt);
