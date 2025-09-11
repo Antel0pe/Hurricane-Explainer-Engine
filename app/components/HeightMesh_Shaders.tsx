@@ -496,6 +496,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     const controls = controlsRef.current;
     const sun = sunRef.current;
     if (!renderer || !scene || !camera || !controls || !sun) return;
+    if (landTexVersion == 0) return;
 
     const loader = new THREE.TextureLoader();
     loader.load(

@@ -57,3 +57,12 @@ to wind particles
 - can add vertical wind to show if it's going up or down
 - vorticity to show cyclonic development
 - show density of air too currently showing wind particle per some interval but real wind has differing amounts of pressure and need to show that too. not only grid particle or random initialization but particle density similar to real density
+
+ideas:
+- color 3d space by temperature
+- make clouds as fog with era5
+- color ocean by temp?
+- simulate waves 
+- more verticality in wind
+- make wind particles not clustered
+- nasa gibs tiles on ground so you can look down while flying around
