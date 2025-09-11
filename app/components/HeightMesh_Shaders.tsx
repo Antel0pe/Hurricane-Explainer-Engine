@@ -3,8 +3,31 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+export const min_max_gph_ranges_glsl = `
+uniform float uPressure;
+void getGphRange(float pressure, out float minRange, out float maxRange) {
+    if (pressure == 250.0) {
+        minRange = 9600.0;
+        maxRange = 11200.0;
+    } else if (pressure == 500.0) {
+        minRange = 4600.0;
+        maxRange = 6000.0;
+    } else if (pressure == 850.0) {
+        minRange = 1200.0;
+        maxRange = 1600.0;
+    } else {
+        // Default/fallback values
+        minRange = 0.0;
+        maxRange = 0.0;
+    }
+}
+`;
+
+
 // Shared GLSL utilities reused by vertex shaders
 const get_position_z_shared_glsl = `
+  ${min_max_gph_ranges_glsl}
+
   float decodeElevation(vec3 rgb) {
     float R = floor(rgb.r * 255.0 + 0.5);
     float G = floor(rgb.g * 255.0 + 0.5);
@@ -13,8 +36,11 @@ const get_position_z_shared_glsl = `
   }
 
   float get_position_z(sampler2D tex, vec2 uv, float exaggeration) {
+    float minGPHRange, maxGPHRange;
+    getGphRange(uPressure, minGPHRange, maxGPHRange);
+
     float elev = decodeElevation(texture2D(tex, uv).rgb);
-    float t = clamp((elev - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
     return exaggeration * t;
   }
 `;
@@ -36,6 +62,8 @@ const VERT = `
 `;
 
 const FRAG = `
+  ${min_max_gph_ranges_glsl}
+
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uTexture;
@@ -61,14 +89,17 @@ const FRAG = `
   void main() {
     // Base color from decoded elevation (red-blue ramp)
     float elevC = decodeElevation(texture2D(uTexture, vUv).rgb);
-    float tC = clamp((elevC - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    float minGPHRange, maxGPHRange;
+    getGphRange(uPressure, minGPHRange, maxGPHRange);
+
+    float tC = clamp((elevC - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
     vec3 base = rampRedBlue(tC);
 
     // Per-pixel normal from finite differences on normalized height (same mapping as vertex displacement)
     float elevR = decodeElevation(texture2D(uTexture, vUv + vec2(uTexelSize.x, 0.0)).rgb);
     float elevU = decodeElevation(texture2D(uTexture, vUv + vec2(0.0, uTexelSize.y)).rgb);
-    float tR = clamp((elevR - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
-    float tU = clamp((elevU - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    float tR = clamp((elevR - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
+    float tU = clamp((elevU - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
 
     // Build tangent vectors in world units: delta in X/Y and corresponding Z change
     vec3 dX = vec3(uUvToWorld.x * uTexelSize.x, 0.0, (tR - tC) * uExaggeration);
@@ -93,15 +124,19 @@ const FRAG = `
 
 // GLSL3 shared helpers for points (GLSL3-compatible texture())
 const GET_POSITION_Z_SHARED_GLSL3 = `
+  ${min_max_gph_ranges_glsl}
   float decodeElevation(vec3 rgb) {
     float R = floor(rgb.r * 255.0 + 0.5);
     float G = floor(rgb.g * 255.0 + 0.5);
     float B = floor(rgb.b * 255.0 + 0.5);
     return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
   }
+    float minGPHRange, maxGPHRange;
+    getGphRange(uPressure, minGPHRange, maxGPHRange);
+
   float get_position_z_glsl3(sampler2D tex, vec2 uv, float exaggeration) {
     float elev = decodeElevation(texture(tex, uv).rgb);
-    float t = clamp((elev - 4600.0) / (6000.0 - 4600.0), 0.0, 1.0);
+    float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
     return exaggeration * t;
   }
 `;
@@ -226,9 +261,9 @@ const SIM_FRAG = `
 
 
 
-type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number };
+type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number };
 
-export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeration }: Props) {
+export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeration, pressureLevel }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -500,6 +535,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               uUvToWorld: { value: uvToWorld },
               uLightDir: { value: lightDir },
               uLandTexture: { value: landTexRef.current },
+              uPressure: { value: pressureLevel}
             },
             vertexShader: VERT,
             fragmentShader: FRAG,
@@ -518,6 +554,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           mat.uniforms.uTexelSize.value = texelSize;
           mat.uniforms.uUvToWorld.value = uvToWorld;
           mat.uniforms.uLightDir.value = lightDir;
+          mat.uniforms.uPressure.value = pressureLevel;
           if (prevTex) prevTex.dispose();
           heightTexRef.current = texture;
           setHeightTexVersion((v) => v + 1);
@@ -656,6 +693,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               uAboveTerrain: { value: 0.1 },
               uCurrentPosition: { value: rtRead.texture },
               uSimSize: { value: new THREE.Vector2(outW, outH) },
+              uPressure: { value: pressureLevel }
             },
           });
 

@@ -22,11 +22,11 @@ def resolve_data_path() -> str:
     return data_path
 
 
-def resolve_gph_image_dir() -> str:
+def resolve_gph_image_dir(pressureLevel) -> str:
     """Resolve absolute path to data/gphImages relative to this file."""
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.abspath(os.path.join(here, os.pardir))
-    out_dir = os.path.join(root, "data", "gphImages/250")
+    out_dir = os.path.join(root, "data", "gphImages/", pressureLevel)
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
 
@@ -263,8 +263,8 @@ def create_app() -> Flask:
     lat = np.arange(90, -90.0001, -0.25)
     lon = np.arange(0, 360, 0.25)
 
-    @app.get("/gph/<datehour>")
-    def gph(datehour: str):
+    @app.get("/gph/<pressureLevel>/<datehour>")
+    def gph(pressureLevel: str, datehour: str):
         try:
             dt = parse_datehour(datehour)
         except ValueError:
@@ -272,7 +272,7 @@ def create_app() -> Flask:
 
         # If a preprocessed image exists, serve it directly with proper headers
         ts = dt.strftime("%Y%m%d%H")
-        image_dir = resolve_gph_image_dir()
+        image_dir = resolve_gph_image_dir(pressureLevel)
         image_path = os.path.join(image_dir, f"gph_{ts}.png")
 
         if os.path.exists(image_path):
