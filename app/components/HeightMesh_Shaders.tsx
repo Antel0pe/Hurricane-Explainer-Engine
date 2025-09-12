@@ -50,13 +50,14 @@ const VERT = `
   varying vec2 vUv;
   uniform sampler2D uTexture;
   uniform float uExaggeration;
+  uniform float zOffset;
 
   ${get_position_z_shared_glsl}
 
   void main() {
     vUv = uv;
     vec3 pos = position;
-    pos.z = position.z + get_position_z(uTexture, uv, uExaggeration);
+    pos.z = position.z + get_position_z(uTexture, uv, uExaggeration) + zOffset;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `;
@@ -261,21 +262,25 @@ const SIM_FRAG = `
 
 
 
-type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number };
+type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
 
-export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeration, pressureLevel }: Props) {
+export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeration, pressureLevel, datehour }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
+  const meshRef2 = useRef<THREE.Mesh | null>(null);
+  const meshRef3 = useRef<THREE.Mesh | null>(null);
   const sunRef = useRef<THREE.DirectionalLight | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
   const landTexRef = useRef<THREE.Texture | null>(null);
   const [landTexVersion, setLandTexVersion] = useState(0);
   const [heightTexVersion, setHeightTexVersion] = useState(0);
   const heightTexRef = useRef<THREE.Texture | null>(null);
+  const heightTexRef2 = useRef<THREE.Texture | null>(null);
+  const heightTexRef3 = useRef<THREE.Texture | null>(null);
   const uvTexRef = useRef<THREE.Texture | null>(null);
   const uvPointsRef = useRef<THREE.Points | null>(null);
   const uvGeoRef = useRef<THREE.BufferGeometry | null>(null);
@@ -290,6 +295,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const outWRef = useRef<number>(0);
   const outHRef = useRef<number>(0);
   const hasSetCameraPosition = useRef(false);
+  const hasSetCameraPosition2 = useRef(false);
+  const hasSetCameraPosition3 = useRef(false);
 
 
   useEffect(() => {
@@ -406,7 +413,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       if (pressed.has('a')) move.sub(right);
       if (pressed.has('q')) move.z += 1;
       if (pressed.has('e')) move.z -= 1;
-      // Space for up, Shift for down
       if (pressed.has(' ')) move.z += 1;
       if (pressed.has('shift')) move.z -= 1;
 
@@ -466,6 +472,22 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       m.dispose();
       meshRef.current = null;
     }
+    if (meshRef2.current) {
+      (meshRef2.current.geometry as THREE.BufferGeometry).dispose();
+      const m2 = meshRef2.current.material as THREE.ShaderMaterial;
+      const tex2 = m2.uniforms?.uTexture?.value as THREE.Texture | undefined;
+      if (tex2) tex2.dispose();
+      m2.dispose();
+      meshRef2.current = null;
+    }
+    if (meshRef3.current) {
+      (meshRef3.current.geometry as THREE.BufferGeometry).dispose();
+      const m3 = meshRef3.current.material as THREE.ShaderMaterial;
+      const tex3 = m3.uniforms?.uTexture?.value as THREE.Texture | undefined;
+      if (tex3) tex3.dispose();
+      m3.dispose();
+      meshRef3.current = null;
+    }
     if (uvPointsRef.current) {
       if (uvGeoRef.current) uvGeoRef.current.dispose();
       if (uvMatRef.current) uvMatRef.current.dispose();
@@ -500,6 +522,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     const sun = sunRef.current;
     if (!renderer || !scene || !camera || !controls || !sun) return;
     if (landTexVersion == 0) return;
+
+    // const pressureLevel = 250;
+    const zOffset = 0;
 
     const loader = new THREE.TextureLoader();
     loader.load(
@@ -539,7 +564,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               uUvToWorld: { value: uvToWorld },
               uLightDir: { value: lightDir },
               uLandTexture: { value: landTexRef.current },
-              uPressure: { value: pressureLevel}
+              uPressure: { value: pressureLevel },
+              zOffset: { value: zOffset }
             },
             vertexShader: VERT,
             fragmentShader: FRAG,
@@ -559,6 +585,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           mat.uniforms.uUvToWorld.value = uvToWorld;
           mat.uniforms.uLightDir.value = lightDir;
           mat.uniforms.uPressure.value = pressureLevel;
+          mat.uniforms.zOffset.value = zOffset;
           if (prevTex) prevTex.dispose();
           heightTexRef.current = texture;
           setHeightTexVersion((v) => v + 1);
@@ -595,6 +622,228 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       }
     );
   }, [pngUrl, exaggeration, landTexVersion]);
+
+  // Second pressure mesh: hardcode URL here
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const sun = sunRef.current;
+    if (!renderer || !scene || !camera || !controls || !sun) return;
+    if (landTexVersion == 0) return;
+
+    const pressureLevel = 500;
+    const zOffset = 0.2;
+    const pngUrl2 = `http://localhost:8001/gph/500/${datehour}`; 
+    if (!pngUrl2) return;
+
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      pngUrl2,
+      (texture) => {
+        texture.colorSpace = THREE.NoColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.NearestFilter;
+        texture.magFilter = THREE.NearestFilter;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        const imageData = texture.image as unknown;
+        let texWidth = 1;
+        let texHeight = 1;
+        if (
+          imageData &&
+          typeof (imageData as { width?: number }).width === "number" &&
+          typeof (imageData as { height?: number }).height === "number"
+        ) {
+          texWidth = (imageData as { width: number }).width;
+          texHeight = (imageData as { height: number }).height;
+        }
+        const aspect = texHeight !== 0 ? texWidth / texHeight : 1.0;
+        const texelSize = new THREE.Vector2(1 / Math.max(1, texWidth), 1 / Math.max(1, texHeight));
+        const uvToWorld = new THREE.Vector2(aspect, 1.0);
+        const lightDir = sun.position.clone().normalize().negate();
+
+        if (!meshRef2.current) {
+          const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
+          const mat = new THREE.ShaderMaterial({
+            uniforms: {
+              uTexture: { value: texture },
+              uExaggeration: { value: exaggeration ?? 0.5 },
+              uTexelSize: { value: texelSize },
+              uUvToWorld: { value: uvToWorld },
+              uLightDir: { value: lightDir },
+              uLandTexture: { value: landTexRef.current },
+              uPressure: { value: pressureLevel },
+              zOffset: { value: zOffset }
+            },
+            vertexShader: VERT,
+            fragmentShader: FRAG,
+            side: THREE.DoubleSide,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.position.z += 0.002; // slight offset
+          scene.add(mesh);
+          meshRef2.current = mesh;
+          heightTexRef2.current = texture;
+        } else {
+          const mesh = meshRef2.current;
+          const mat = mesh!.material as THREE.ShaderMaterial;
+          const prevTex = mat.uniforms?.uTexture?.value as THREE.Texture | undefined;
+          mat.uniforms.uTexture.value = texture;
+          mat.uniforms.uTexelSize.value = texelSize;
+          mat.uniforms.uUvToWorld.value = uvToWorld;
+          mat.uniforms.uLightDir.value = lightDir;
+          mat.uniforms.uPressure.value = pressureLevel;
+          mat.uniforms.zOffset.value = zOffset;
+          if (prevTex) prevTex.dispose();
+          heightTexRef2.current = texture;
+
+          const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
+          (mesh!.geometry as THREE.BufferGeometry).dispose();
+          mesh!.geometry = newGeo;
+        }
+
+        if (!hasSetCameraPosition2.current && meshRef2.current) {
+          const sphere = new THREE.Sphere();
+          new THREE.Box3().setFromObject(meshRef2.current).getBoundingSphere(sphere);
+          const fov = THREE.MathUtils.degToRad(camera.fov);
+          const dist = sphere.radius / Math.sin(fov / 2);
+          camera.position.set(
+            sphere.center.x,
+            sphere.center.y - dist * 0.2,
+            sphere.center.z + sphere.radius * 2
+          );
+          camera.near = Math.max(0.1, dist * 0.001);
+          camera.far = dist * 10;
+          camera.updateProjectionMatrix();
+          camera.lookAt(sphere.center);
+          controls.target.copy(sphere.center);
+          controls.update();
+          hasSetCameraPosition2.current = true;
+        }
+
+        renderer.render(scene, camera);
+      },
+      undefined,
+      (err) => {
+        console.error("Texture load error (mesh2)", err);
+      }
+    );
+  }, [exaggeration, landTexVersion]);
+
+  // Third pressure mesh: hardcode URL here
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const sun = sunRef.current;
+    if (!renderer || !scene || !camera || !controls || !sun) return;
+    if (landTexVersion == 0) return;
+
+    const pressureLevel = 850;
+    const zOffset = 0.5;
+    const pngUrl3 = `http://localhost:8001/gph/850/${datehour}`; 
+    if (!pngUrl3) return;
+
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      pngUrl3,
+      (texture) => {
+        texture.colorSpace = THREE.NoColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.NearestFilter;
+        texture.magFilter = THREE.NearestFilter;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        const imageData = texture.image as unknown;
+        let texWidth = 1;
+        let texHeight = 1;
+        if (
+          imageData &&
+          typeof (imageData as { width?: number }).width === "number" &&
+          typeof (imageData as { height?: number }).height === "number"
+        ) {
+          texWidth = (imageData as { width: number }).width;
+          texHeight = (imageData as { height: number }).height;
+        }
+        const aspect = texHeight !== 0 ? texWidth / texHeight : 1.0;
+        const texelSize = new THREE.Vector2(1 / Math.max(1, texWidth), 1 / Math.max(1, texHeight));
+        const uvToWorld = new THREE.Vector2(aspect, 1.0);
+        const lightDir = sun.position.clone().normalize().negate();
+
+        if (!meshRef3.current) {
+          const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
+          const mat = new THREE.ShaderMaterial({
+            uniforms: {
+              uTexture: { value: texture },
+              uExaggeration: { value: exaggeration ?? 0.5 },
+              uTexelSize: { value: texelSize },
+              uUvToWorld: { value: uvToWorld },
+              uLightDir: { value: lightDir },
+              uLandTexture: { value: landTexRef.current },
+              uPressure: { value: pressureLevel },
+              zOffset: { value: zOffset }
+            },
+            vertexShader: VERT,
+            fragmentShader: FRAG,
+            side: THREE.DoubleSide,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.position.z += 0.004; // slight offset
+          scene.add(mesh);
+          meshRef3.current = mesh;
+          heightTexRef3.current = texture;
+        } else {
+          const mesh = meshRef3.current;
+          const mat = mesh!.material as THREE.ShaderMaterial;
+          const prevTex = mat.uniforms?.uTexture?.value as THREE.Texture | undefined;
+          mat.uniforms.uTexture.value = texture;
+          mat.uniforms.uTexelSize.value = texelSize;
+          mat.uniforms.uUvToWorld.value = uvToWorld;
+          mat.uniforms.uLightDir.value = lightDir;
+          mat.uniforms.uPressure.value = pressureLevel;
+          mat.uniforms.zOffset.value = zOffset;
+          if (prevTex) prevTex.dispose();
+          heightTexRef3.current = texture;
+
+          const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
+          (mesh!.geometry as THREE.BufferGeometry).dispose();
+          mesh!.geometry = newGeo;
+        }
+
+        if (!hasSetCameraPosition3.current && meshRef3.current) {
+          const sphere = new THREE.Sphere();
+          new THREE.Box3().setFromObject(meshRef3.current).getBoundingSphere(sphere);
+          const fov = THREE.MathUtils.degToRad(camera.fov);
+          const dist = sphere.radius / Math.sin(fov / 2);
+          camera.position.set(
+            sphere.center.x,
+            sphere.center.y - dist * 0.2,
+            sphere.center.z + sphere.radius * 2
+          );
+          camera.near = Math.max(0.1, dist * 0.001);
+          camera.far = dist * 10;
+          camera.updateProjectionMatrix();
+          camera.lookAt(sphere.center);
+          controls.target.copy(sphere.center);
+          controls.update();
+          hasSetCameraPosition3.current = true;
+        }
+
+        renderer.render(scene, camera);
+      },
+      undefined,
+      (err) => {
+        console.error("Texture load error (mesh3)", err);
+      }
+    );
+  }, [exaggeration, landTexVersion]);
 
   // Load/replace UV wind texture and create/update a persistent point cloud
   useEffect(() => {
@@ -848,7 +1097,23 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           mat.uniforms.uLandTexture.value = tex;
           if (prevLand) prevLand.dispose();
         }
-        if (renderer && camera && meshRef.current) {
+        const mesh2 = meshRef2.current;
+        if (mesh2) {
+          const mat2 = mesh2.material as THREE.ShaderMaterial;
+          const prevLand2 = mat2.uniforms?.uLandTexture?.value as THREE.Texture | undefined;
+          mat2.uniforms.uLandTexture = mat2.uniforms.uLandTexture || { value: null };
+          mat2.uniforms.uLandTexture.value = tex;
+          if (prevLand2) prevLand2.dispose();
+        }
+        const mesh3 = meshRef3.current;
+        if (mesh3) {
+          const mat3 = mesh3.material as THREE.ShaderMaterial;
+          const prevLand3 = mat3.uniforms?.uLandTexture?.value as THREE.Texture | undefined;
+          mat3.uniforms.uLandTexture = mat3.uniforms.uLandTexture || { value: null };
+          mat3.uniforms.uLandTexture.value = tex;
+          if (prevLand3) prevLand3.dispose();
+        }
+        if (renderer && camera && (meshRef.current || meshRef2.current || meshRef3.current)) {
           renderer.render(scene, camera);
         }
       },
