@@ -132,10 +132,10 @@ const GET_POSITION_Z_SHARED_GLSL3 = `
     float B = floor(rgb.b * 255.0 + 0.5);
     return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
   }
+  float get_position_z_glsl3(sampler2D tex, vec2 uv, float exaggeration) {
     float minGPHRange, maxGPHRange;
     getGphRange(uPressure, minGPHRange, maxGPHRange);
 
-  float get_position_z_glsl3(sampler2D tex, vec2 uv, float exaggeration) {
     float elev = decodeElevation(texture(tex, uv).rgb);
     float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
     return exaggeration * t;

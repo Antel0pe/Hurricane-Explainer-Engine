@@ -35,7 +35,7 @@ def resolve_uv_image_dir() -> str:
     """Resolve absolute path to data/uv_images relative to this file."""
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.abspath(os.path.join(here, os.pardir))
-    out_dir = os.path.join(root, "data", "uv_images")
+    out_dir = os.path.join(root, "data", "uv_images/250")
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
 
