@@ -6,7 +6,7 @@ export const NY = 721;
 export const BOUNDS: [number, number, number, number] = [-180.0, -90.0, 179.75, 90.0];
 
 // read from .env or fallback to "data"
-const DATA_FOLDER = process.env.DATA_FOLDER ?? "data";
+const DATA_FOLDER = process.env.DATA_FOLDER ?? "exampleData";
 
 export function boundsHeaders() {
   return {

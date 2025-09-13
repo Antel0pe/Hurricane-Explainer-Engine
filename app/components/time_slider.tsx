@@ -24,22 +24,39 @@ function fromDate(dt: Date): string {
   return `${y}${m}${d}${h}`;
 }
 
-export default function TimeSlider({value, onChange}: TimeSliderProps) {
-  const start = useMemo(() => new Date(Date.UTC(2017, 7, 1, 0, 0, 0)), []); // 2017-08-01 00Z
-  const end = useMemo(() => new Date(Date.UTC(2017, 8, 30, 23, 0, 0)), []);  // 2017-09-30 23Z
+function safeParseEnvDateHour(envVal: string | undefined, fallback: string): string {
+  const v = (envVal ?? "").trim();
+  if (/^\d{10}$/.test(v)) return v;
+  return fallback;
+}
 
-  const totalHours = useMemo(() => Math.floor((end.getTime() - start.getTime()) / 3600000), [start, end]);
-  const currentHours = useMemo(() => Math.max(0, Math.min(totalHours, Math.floor((toDate(value).getTime() - start.getTime()) / 3600000))), [value, start, totalHours]);
+export default function TimeSlider({value, onChange}: TimeSliderProps) {
+  // Read public envs (compile-time substitution in Next.js)
+  const START_STR = safeParseEnvDateHour(process.env.NEXT_PUBLIC_TIME_START, "2017080100");
+  const END_STR   = safeParseEnvDateHour(process.env.NEXT_PUBLIC_TIME_END,   "2017080123");
+
+  const start = useMemo(() => toDate(START_STR), [START_STR]);
+  const endRaw = useMemo(() => toDate(END_STR), [END_STR]);
+
+  // Ensure end is not before start; if so, collapse to start
+  const end = useMemo(() => (endRaw.getTime() < start.getTime() ? new Date(start) : endRaw), [endRaw, start]);
+
+  const totalHours = useMemo(
+    () => Math.max(0, Math.floor((end.getTime() - start.getTime()) / 3600000)),
+    [start, end]
+  );
+
+  const currentHours = useMemo(() => {
+    const curMs = toDate(value).getTime();
+    const clampedMs = Math.max(start.getTime(), Math.min(end.getTime(), curMs));
+    return Math.max(0, Math.min(totalHours, Math.floor((clampedMs - start.getTime()) / 3600000)));
+  }, [value, start, end, totalHours]);
 
   const currentHoursRef = useRef<number>(currentHours);
-  useEffect(() => {
-    currentHoursRef.current = currentHours;
-  }, [currentHours]);
+  useEffect(() => { currentHoursRef.current = currentHours; }, [currentHours]);
 
   const totalHoursRef = useRef<number>(totalHours);
-  useEffect(() => {
-    totalHoursRef.current = totalHours;
-  }, [totalHours]);
+  useEffect(() => { totalHoursRef.current = totalHours; }, [totalHours]);
 
   const step = useCallback((delta: -1 | 1) => {
     const nextHours = Math.max(0, Math.min(totalHoursRef.current, currentHoursRef.current + delta));
@@ -106,9 +123,7 @@ export default function TimeSlider({value, onChange}: TimeSliderProps) {
       } else if (e.key === "d" || e.key === "ArrowRight") {
         held.right = false;
       }
-      if (!held.left && !held.right) {
-        stopTimer();
-      }
+      if (!held.left && !held.right) stopTimer();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -126,11 +141,15 @@ export default function TimeSlider({value, onChange}: TimeSliderProps) {
     onChange(fromDate(dt));
   }
 
+  // Labels from env-backed start/end
+  const startLabel = `${START_STR.slice(0,4)}-${START_STR.slice(4,6)}-${START_STR.slice(6,8)} ${START_STR.slice(8,10)}Z`;
+  const endLabel   = `${END_STR.slice(0,4)}-${END_STR.slice(4,6)}-${END_STR.slice(6,8)} ${END_STR.slice(8,10)}Z`;
+
   return (
     <div style={{display: "flex", flexDirection: "column", gap: 8, padding: 12, width: "100%", height: "100%"}}>
       <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
-        <span>2017-08-01 00Z</span>
-        <span>2017-09-30 23Z</span>
+        <span>{startLabel}</span>
+        <span>{endLabel}</span>
       </div>
       <input
         type="range"
@@ -147,5 +166,3 @@ export default function TimeSlider({value, onChange}: TimeSliderProps) {
     </div>
   );
 }
-
-
