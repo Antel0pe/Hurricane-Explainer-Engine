@@ -271,15 +271,15 @@ void main() {
     uniform sampler2D uWindTexture;
 
     const float WIND_GAIN = 0.05;
-    const float L_TARGET = 5000000.0;
-    const float DIST_MIN = 0.001;
+    const float L_TARGET = 10.0;
+    const float DIST_MIN = 0.05;
 
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
-vec2 jitter(vec2 st){
-  float a = 6.2831853*hash(st+0.37);
-  float r = 0.003 + 0.004*hash(st+0.91); // tune radius
-  return vec2(cos(a), sin(a))*r;
-}
+    vec2 jitter(vec2 st){
+      float a = 6.2831853*hash(st+0.37);
+      float r = 0.003 + 0.004*hash(st+0.91); // tune radius
+      return vec2(cos(a), sin(a))*r;
+    }
 
     vec2 sampleWindUV(vec2 uv) {
       // wrap so we can step past edges cleanly
@@ -294,6 +294,7 @@ vec2 jitter(vec2 st){
 
       vec4 prev = texture(uPrev, st);
       vec2 position = prev.rg;
+      float totalLifeThreshold = prev.b;
 
       vec2 v1 = sampleWindUV(position) * WIND_GAIN;           // slope at current pos
       vec2 midPos = fract(position + v1 * (0.5 * uDt));       // provisional half-step
@@ -303,17 +304,17 @@ vec2 jitter(vec2 st){
       float lifeExpended = prev.a;
       float movedUV  = length(newPos - position);
       float distanceParticleMoved = max(movedUV, DIST_MIN);
-      lifeExpended = clamp(lifeExpended + (distanceParticleMoved / L_TARGET), 0.0, 1.0);
+      lifeExpended += distanceParticleMoved / L_TARGET;
 
-      float randomNum = hash(newPos + st + lifeExpended);
-      bool particleIsDead = (randomNum < lifeExpended);
+      bool particleIsDead = (totalLifeThreshold <= lifeExpended);
 
       if (particleIsDead) {
         newPos =  fract(st + jitter(st));
         lifeExpended = 0.0;
+        totalLifeThreshold = hash(newPos + st) + 1.0;
       }
 
-      fragColor = vec4(newPos, 0.0, lifeExpended);
+      fragColor = vec4(newPos, totalLifeThreshold, lifeExpended);
   }
   `
 
