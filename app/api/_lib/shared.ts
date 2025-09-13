@@ -1,11 +1,12 @@
 // app/api/_lib/shared.ts
 import path from "node:path";
 
-// export const runtime = "nodejs"; // ensure Node (we read the filesystem)
-
 export const NX = 1440; // 0.25° global ERA5
 export const NY = 721;
 export const BOUNDS: [number, number, number, number] = [-180.0, -90.0, 179.75, 90.0];
+
+// read from .env or fallback to "data"
+const DATA_FOLDER = process.env.DATA_FOLDER ?? "data";
 
 export function boundsHeaders() {
   return {
@@ -15,20 +16,19 @@ export function boundsHeaders() {
 }
 
 function repoRoot() {
-  // Assumes your /data folder is at the project root
   return process.cwd();
 }
 
 export function gphDir(pressureLevel: string) {
-  return path.join(repoRoot(), "data", "gphImages", String(pressureLevel));
+  return path.join(repoRoot(), DATA_FOLDER, "gphImages", String(pressureLevel));
 }
 
 export function uvDir() {
-  return path.join(repoRoot(), "data", "uv_images", "250");
+  return path.join(repoRoot(), DATA_FOLDER, "uv_images", "250");
 }
 
 export function landMaskPath() {
-  return path.join(repoRoot(), "data", "landMask.png");
+  return path.join(repoRoot(), DATA_FOLDER, "landMask.png");
 }
 
 export function parseDatehour(value: string): Date {
@@ -53,7 +53,6 @@ export function parseDatehour(value: string): Date {
 }
 
 function matchFormat(s: string, fmt: string) {
-  // tiny parser for the few formats above
   const re = fmt
     .replace("%Y","(?<y>\\d{4})")
     .replace("%m","(?<M>\\d{2})")
