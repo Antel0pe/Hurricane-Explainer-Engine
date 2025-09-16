@@ -214,6 +214,43 @@ const UV_POINTS_FRAG = `
   }
 `;
 
+const LAT_LNG_TO_UV_CONVERSION = `
+// --- constants & helpers (put above main) ---
+const float PI = 3.14159265358979323846264;
+const float EARTH_R = 6371000.0;                // meters
+const float M_PER_DEG_LAT = (2.0 * PI * EARTH_R) / 360.0; // ≈ 111320 m/deg
+
+// Plate carrée mapping helpers
+float latFromV(float vTex) {
+  // vTex: 0 (top) → 1 (bottom) maps to +90° → −90°
+  return 90.0 - 180.0 * vTex;                   // degrees
+}
+
+// Convert (u,v) in m/s at latitude (deg) over dt seconds → ΔUV on plate carrée
+vec2 deltaUV_from_ms(vec2 uv_mps, float lat_deg, float dt) {
+  float phi = radians(lat_deg);
+  float cosphi = cos(phi);
+  // meters per degree of longitude shrinks by cos(lat); avoid blow-ups near poles
+  float m_per_deg_lon = max(M_PER_DEG_LAT * max(cosphi, 1e-6), 1e-6);
+
+  // degrees moved this step
+  float dlat_deg = (uv_mps.y * dt) / M_PER_DEG_LAT;
+  float dlon_deg = (uv_mps.x * dt) / m_per_deg_lon;
+
+  // degrees → normalized texture UV (note: V increases downward ⇒ minus sign on dlat)
+  float du = (dlon_deg / 360.0) * cosphi;
+  float dv = -dlat_deg / 180.0;
+  return vec2(du, dv);
+}
+
+// Wrap only longitude (U); clamp latitude (V) to avoid pole wrap
+vec2 wrapClampUV(vec2 uv) {
+  uv.x = fract(uv.x);
+  uv.y = clamp(uv.y, 0.0, 1.0);
+  return uv;
+}
+`
+
 const SIM_VERT = `
 out vec2 vUv;
 void main() {
@@ -261,6 +298,7 @@ void main() {
 // `;
 
   const SIM_FRAG = `
+    ${LAT_LNG_TO_UV_CONVERSION}
     precision highp float;
     in vec2 vUv;
     out vec4 fragColor;
@@ -270,7 +308,7 @@ void main() {
     uniform vec2  uSize;
     uniform sampler2D uWindTexture;
 
-    const float WIND_GAIN = 0.05;
+    const float WIND_GAIN = 5.0;
     const float L_TARGET = 10.0;
     const float DIST_MIN = 0.05;
 
@@ -296,11 +334,21 @@ void main() {
       vec2 position = prev.rg;
       float totalLifeThreshold = prev.b;
 
-      vec2 v1 = sampleWindUV(position) * WIND_GAIN;           // slope at current pos
-      vec2 midPos = fract(position + v1 * (0.5 * uDt));       // provisional half-step
-      vec2 v2 = sampleWindUV(midPos) * WIND_GAIN;             // slope at midpoint
-      vec2 newPos = fract(position + v2 * uDt);               // advance with midpoint slope
+      // --- RK2 with physical advection ---
+      // Step 1: sample wind at current pos (assumed m/s), convert to ΔUV over (0.5*dt)
+      vec2 wind1_ms = sampleWindUV(position) * WIND_GAIN;                // m/s
+      float lat1_deg = latFromV(position.y);
+      vec2 duv1 = deltaUV_from_ms(wind1_ms, lat1_deg, 0.5 * uDt);
 
+      // Midpoint position
+      vec2 midPos = wrapClampUV(position + duv1);
+
+      // Step 2: sample at midpoint and advance full dt with midpoint slope
+      vec2 wind2_ms = sampleWindUV(midPos) * WIND_GAIN;                  // m/s
+      float lat2_deg = latFromV(midPos.y);
+      vec2 duv2 = deltaUV_from_ms(wind2_ms, lat2_deg, uDt);
+
+      vec2 newPos = wrapClampUV(position + duv2);
       float lifeExpended = prev.a;
       float movedUV  = length(newPos - position);
       float distanceParticleMoved = max(movedUV, DIST_MIN);
@@ -309,7 +357,7 @@ void main() {
       bool particleIsDead = (totalLifeThreshold <= lifeExpended);
 
       if (particleIsDead) {
-        newPos =  fract(st + jitter(st));
+        newPos =  st;
         lifeExpended = 0.0;
         totalLifeThreshold = hash(newPos + st) + 1.0;
       }
@@ -1219,7 +1267,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
       // --- SIM UPDATE: render into small RT (no feedback-loop) ---
       simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
-      simMat.uniforms.uDt.value   = dt;
+      simMat.uniforms.uDt.value   = 3000;
 
       const rt = writePositionRTRef.current!;
       renderer.setRenderTarget(writePositionRTRef.current!);

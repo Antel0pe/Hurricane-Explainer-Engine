@@ -46,3 +46,10 @@ ideas:
 - more verticality in wind
 - make wind particles not clustered
 - nasa gibs tiles on ground so you can look down while flying around
+
+ways to make wind particles better
+- more dense initialization
+- with tail and fade out on death
+- rk4
+- cos stuff since it's on earth
+- in encoding dont scale with min/max, scale with defined units
