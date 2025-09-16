@@ -192,6 +192,7 @@ const UV_POINTS_VERT = `
   uniform int uStep;
   uniform float uAboveTerrain;
   flat out int vId;
+  out float particleOpacity;
   void main(){
     vec2 uvIdx = get_uv_from_vertex_id_subsampled(uGridW, uGridH, uStep);
     vec2 uv = texture(uCurrentPosition, uvIdx).rg;
@@ -200,6 +201,14 @@ const UV_POINTS_VERT = `
     vId = gl_VertexID;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain, 1.0);
     gl_PointSize = uPointSize;
+
+    vec4 simSample = texture(uCurrentPosition, uvIdx);
+    float totalLife    = max(simSample.b, 1e-6); // avoid div-by-zero
+    float lifeExpended = simSample.a;
+    float p = clamp(lifeExpended / totalLife, 0.0, 1.0);
+    // triangle fade (0 at birth, 1 at midlife, 0 at death)
+    particleOpacity = 1.0 - abs(2.0 * p - 1.0);
+
   }`;
 const UV_POINTS_FRAG = `
   precision highp float;
@@ -207,10 +216,11 @@ const UV_POINTS_FRAG = `
   uniform sampler2D uCurrentPosition;
   uniform vec2 uSimSize;
   out vec4 fragColor;
+  in float particleOpacity;
   void main(){
     vec2 d = gl_PointCoord - 0.5;
     if(dot(d,d) > 0.25) discard;
-    fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    fragColor = vec4(0.0, 0.0, 0.0, particleOpacity);
   }
 `;
 
@@ -1044,7 +1054,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           const mat = new THREE.ShaderMaterial({
             vertexShader: UV_POINTS_VERT,
             fragmentShader: UV_POINTS_FRAG,
-            transparent: false,
+            transparent: true,
+            blending: THREE.NormalBlending,
             depthTest: true,
             glslVersion: THREE.GLSL3,
             uniforms: {
