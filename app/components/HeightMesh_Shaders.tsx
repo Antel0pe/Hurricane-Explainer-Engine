@@ -204,7 +204,13 @@ const UV_POINTS_VERT = `
     float totalLife = texture(uCurrentPosition, uvIdx).b;
     float lifeExpended = texture(uCurrentPosition, uvIdx).a;
     float p = clamp(lifeExpended / totalLife, 0.0, 1.0);
-    float fade = (p < 0.75) ? 1.0 : (1.0 - smoothstep(0.75, 1.0, p));
+    // 0→1 from birth to 0.25
+    float fadeIn  = smoothstep(0.0, 0.25, p);
+    // 1→0 from 0.75 to death
+    float fadeOut = 1.0 - smoothstep(0.75, 1.0, p);
+
+    // full curve: up → hold → down
+    float fade = fadeIn * fadeOut;
     gl_PointSize = uPointSize * max(fade, 0.001); // shrink away
   }`;
 const UV_POINTS_FRAG = `
@@ -265,44 +271,6 @@ void main() {
   gl_Position = vec4(position.xy, 0.0, 1.0);  
 }
 `;
-
-// const SIM_FRAG = `
-//   precision highp float;
-//   in vec2 vUv;
-//   out vec4 fragColor;
-
-//   uniform sampler2D uPrev;
-//   uniform float uDt, uSpeed;
-//   uniform vec2  uSize;
-//   uniform sampler2D uWindTexture;
-
-//   const float WIND_GAIN = 0.05;
-//   const float L_TARGET = 0.5;
-
-//   void main() {
-//     vec2 st = (gl_FragCoord.xy - 0.5) / uSize;
-
-//     vec4 prev = texture(uPrev, st);
-//     vec2 position = prev.rg;
-
-//     vec2 particlePositionUV = texture(uWindTexture, position).rg;
-//     vec2 wind = vec2(particlePositionUV.r * 2.0 - 1.0, -(particlePositionUV.g * 2.0 - 1.0));
-//     vec2 windUVSpeed = wind * WIND_GAIN;
-//     position = fract(position + windUVSpeed * uDt);
-
-//     float particleTotalSpeed = length(windUVSpeed);
-//     float stepDist = particleTotalSpeed * uDt;
-//     float life = prev.a;
-//     life -= stepDist / L_TARGET;
-
-//     if (life <= 0.0) {
-//       position = st;
-//       life = L_TARGET;
-//     }
-
-//     fragColor = vec4(position, 0.0, life);
-// }
-// `;
 
   const SIM_FRAG = `
     ${LAT_LNG_TO_UV_CONVERSION}
@@ -749,7 +717,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
     const pressureLevel = 500;
     const zOffset = 2.5;
-    const pngUrl2 = `http://localhost:8001/gph/500/${datehour}`; 
+    const pngUrl2 = `/api/gph/500/${datehour}`; 
     if (!pngUrl2) return;
 
     const loader = new THREE.TextureLoader();
@@ -862,7 +830,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
     const pressureLevel = 850;
     const zOffset = 5;
-    const pngUrl3 = `http://localhost:8001/gph/850/${datehour}`; 
+    const pngUrl3 = `/api/gph/850/${datehour}`; 
     if (!pngUrl3) return;
 
     const loader = new THREE.TextureLoader();
