@@ -200,15 +200,12 @@ const UV_POINTS_VERT = `
     float z = get_position_z_glsl3(uTerrainTexture, uv, uExaggeration);
     vId = gl_VertexID;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain, 1.0);
-    gl_PointSize = uPointSize;
 
-    vec4 simSample = texture(uCurrentPosition, uvIdx);
-    float totalLife    = max(simSample.b, 1e-6); // avoid div-by-zero
-    float lifeExpended = simSample.a;
+    float totalLife = texture(uCurrentPosition, uvIdx).b;
+    float lifeExpended = texture(uCurrentPosition, uvIdx).a;
     float p = clamp(lifeExpended / totalLife, 0.0, 1.0);
-    // triangle fade (0 at birth, 1 at midlife, 0 at death)
-    particleOpacity = 1.0 - abs(2.0 * p - 1.0);
-
+    float fade = (p < 0.75) ? 1.0 : (1.0 - smoothstep(0.75, 1.0, p));
+    gl_PointSize = uPointSize * max(fade, 0.001); // shrink away
   }`;
 const UV_POINTS_FRAG = `
   precision highp float;
@@ -220,7 +217,7 @@ const UV_POINTS_FRAG = `
   void main(){
     vec2 d = gl_PointCoord - 0.5;
     if(dot(d,d) > 0.25) discard;
-    fragColor = vec4(0.0, 0.0, 0.0, particleOpacity);
+    fragColor = vec4(0.0, 0.0, 0.0, 1.0);
   }
 `;
 
@@ -686,8 +683,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             vertexShader: VERT,
             fragmentShader: FRAG,
             side: THREE.DoubleSide,
-              transparent: true,
-  depthWrite: false,
+            transparent: false,
           });
           const mesh = new THREE.Mesh(geo, mat);
           scene.add(mesh);
