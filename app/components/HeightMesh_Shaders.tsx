@@ -1228,6 +1228,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   
     const clock = new THREE.Clock();
     let running = true;
+    let simTimeElapsed = 0;
+    const simTimeStep = 3000;
+    const simTimeLimit = 250_000;
   
     const loop = () => {
       if (!running) return;
@@ -1242,8 +1245,13 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
       // --- SIM UPDATE: render into small RT (no feedback-loop) ---
       simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
-      simMat.uniforms.uDt.value   = 3000;
-
+      if (simTimeElapsed < simTimeLimit){
+        simMat.uniforms.uDt.value   = simTimeStep;
+        simTimeElapsed += simTimeStep;
+      } else {
+        simMat.uniforms.uDt.value = 0;
+      }
+      
       const rt = writePositionRTRef.current!;
       renderer.setRenderTarget(writePositionRTRef.current!);
       renderer.setViewport(0, 0, outWRef.current, outHRef.current);
