@@ -253,6 +253,7 @@ vec2 deltaUV_from_ms(vec2 uv_mps, float lat_deg, float dt) {
   float dlon_deg = (uv_mps.x * dt) / m_per_deg_lon;
 
   // degrees → normalized texture UV (note: V increases downward ⇒ minus sign on dlat)
+  // WHEN MOVING TO GLOBE RATHER THAN RECTANGLE, REMOVE COSPHI
   float du = (dlon_deg / 360.0) * cosphi;
   float dv = -dlat_deg / 180.0;
   return vec2(du, dv);
@@ -462,6 +463,98 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     // If damping loop isn't running, at least render this change once.
     if (!animating) renderOnce();
   });
+  
+    // ===== Hover-to-rotate (no mousedown) with light inertia =====
+  controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
+
+  // pull bounds from controls so your existing settings still apply
+  const minAz = controls.minAzimuthAngle ?? -Infinity;
+  const maxAz = controls.maxAzimuthAngle ??  Infinity;
+  const minPh = controls.minPolarAngle   ??  0;
+  const maxPh = controls.maxPolarAngle   ??  Math.PI;
+
+  const elem = renderer.domElement;
+  const up   = camera.up.clone().normalize();
+
+  // Map camera.up -> +Y like OrbitControls does
+  const quat = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
+  const quatInv = quat.clone().invert();
+
+  const spherical = new THREE.Spherical();
+  const offset    = new THREE.Vector3();
+
+  // mouse→angle scaling similar to OrbitControls
+  const ROTATE_SPEED = controls.rotateSpeed; // default 1.0
+  const scale = (px: number) => (2 * Math.PI * px / elem.clientHeight) * ROTATE_SPEED;
+
+  // simple inertia to mimic damping
+  let vTheta = 0, vPhi = 0;           // angular velocity
+  const INERTIA = 0.10;               // 0..1 (higher = more glide)
+  const GAIN    = 0.5;               // 0..1 (how much new mouse delta feeds in)
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (e.target !== elem) return;
+    const dx = (e.movementX ?? 0);
+    const dy = (e.movementY ?? 0);
+
+    // accumulate desired angular velocity from mouse deltas
+    vTheta += -scale(dx) * GAIN; // azimuth (left/right)
+    vPhi   += -scale(dy) * GAIN; // polar   (up/down)
+
+    startDampedRAF(); // use your existing RAF kicker
+  };
+
+  // apply the velocity each frame, decay with inertia, clamp, and reposition camera
+  const applyOrbitStep = () => {
+    // 1) current offset in Y-up space
+    offset.copy(camera.position).sub(controls.target).applyQuaternion(quat);
+    spherical.setFromVector3(offset);
+
+    // 2) integrate velocity
+    spherical.theta += vTheta;
+    spherical.phi   += vPhi;
+
+    // 3) clamp to OrbitControls-style limits
+    spherical.theta = Math.max(minAz, Math.min(maxAz, spherical.theta));
+    spherical.phi   = Math.max(minPh, Math.min(maxPh, spherical.phi));
+
+    // 4) write back position (preserve radius)
+    offset.setFromSpherical(spherical).applyQuaternion(quatInv);
+    camera.position.copy(controls.target).add(offset);
+    camera.lookAt(controls.target);
+
+    // 5) decay velocity (inertia)
+    vTheta *= INERTIA;
+    vPhi   *= INERTIA;
+
+    // let OrbitControls dispatch 'change' listeners (your render loop listens to controls.update())
+    controls.dispatchEvent({ type: 'change' });
+  };
+
+  // hook our step into your damped RAF loop
+  const _origUpdate = controls.update.bind(controls);
+  controls.update = (...args: any[]) => {
+    // first, apply our orbit step so camera is up-to-date
+    applyOrbitStep();
+    // then run the normal OrbitControls update (handles zoom limits, etc.)
+    return _origUpdate(...args);
+  };
+
+  elem.addEventListener('mousemove', onMouseMove);
+
+  // keep wheel zoom & pan working, avoid double-rotate on drag
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.PAN,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.PAN,
+  };
+
+  // Request pointer lock when clicking the canvas
+  elem.addEventListener("click", () => {
+    if (document.pointerLockElement !== elem) {
+      elem.requestPointerLock({ unadjustedMovement: true });
+    }
+  });
 
   // ------------------ keyboard movement (WASD/Arrows on XY, Q/E on Z) ------------------
   const pressed = new Set<string>();
@@ -603,6 +696,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     }
     renderer.dispose();
     if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
+  
+    elem.removeEventListener('mousemove', onMouseMove);
+    // restore controls.update if you like (optional in most apps)
+    (controls as any).update = _origUpdate;
   };
 }, []);
 

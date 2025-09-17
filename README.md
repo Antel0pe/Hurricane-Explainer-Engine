@@ -54,3 +54,13 @@ ways to make wind particles better
 - cos stuff since it's on earth
 - in encoding dont scale with min/max, scale with defined units
 - color particles by altitude?
+
+future ideas:
+- waves
+- clouds
+- vertical air particle motion -- although would this conflict with air particles z values being determined by gph currently. 
+    - answer is depending on which variable i get. if i look at the rising/sinking nature of air at a certain pressure level that is equivalent to gph since that tells me how air is rising and sinking at a given pressure level. if i look at variables that tell me absolutely rising/sinking nature then it's different and will generally line up with gph in quiet flows but in things like hurricanes will not line up with gph ie. not stay at a single pressure level
+- integrate with globegl or turn it into a globe rather than rectangle
+    - need to disable stretch in this line
+    - // WHEN MOVING TO GLOBE RATHER THAN RECTANGLE, REMOVE COSPHI
+    - float du = (dlon_deg / 360.0) * cosphi;
