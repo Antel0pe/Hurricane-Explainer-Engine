@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import WindUvLayer from "./WindUVLayer";
 
 export const min_max_gph_ranges_glsl = `
 uniform float uPressure;
@@ -119,7 +120,7 @@ const FRAG = `
     float isLand = step(0.5, 1.0 - landWhiteLevel);
     color = mix(color, vec3(0.0), isLand * 0.25);
 
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragColor = vec4(color, 0.5);
   }
 `;
 
@@ -191,6 +192,7 @@ const UV_POINTS_VERT = `
   uniform int uGridH;
   uniform int uStep;
   uniform float uAboveTerrain;
+  uniform float zOffset;
   flat out int vId;
   out float particleOpacity;
   void main(){
@@ -199,7 +201,7 @@ const UV_POINTS_VERT = `
     vec2 xy = plane_xy_from_uv(uv, uAspect);
     float z = get_position_z_glsl3(uTerrainTexture, uv, uExaggeration);
     vId = gl_VertexID;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain + zOffset, 1.0);
 
     float totalLife = texture(uCurrentPosition, uvIdx).b;
     float lifeExpended = texture(uCurrentPosition, uvIdx).a;
@@ -341,7 +343,16 @@ void main() {
   }
   `
 
-
+type WindLayerAPI = {
+  simScene: THREE.Scene;
+  simCam: THREE.OrthographicCamera;
+  simMat: THREE.ShaderMaterial;
+  readRT: THREE.WebGLRenderTarget;
+  writeRT: THREE.WebGLRenderTarget;
+  ptsMat: THREE.ShaderMaterial;
+  outW: number;
+  outH: number;
+};
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
 
@@ -359,6 +370,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const landTexRef = useRef<THREE.Texture | null>(null);
   const [landTexVersion, setLandTexVersion] = useState(0);
   const [heightTexVersion, setHeightTexVersion] = useState(0);
+  const [heightTexVersion2, setHeightTexVersion2] = useState(0);
   const heightTexRef = useRef<THREE.Texture | null>(null);
   const heightTexRef2 = useRef<THREE.Texture | null>(null);
   const heightTexRef3 = useRef<THREE.Texture | null>(null);
@@ -378,7 +390,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const hasSetCameraPosition = useRef(false);
   const hasSetCameraPosition2 = useRef(false);
   const hasSetCameraPosition3 = useRef(false);
-
+  const windLayersRef = useRef<WindLayerAPI[]>([]);
 
   useEffect(() => {
   const host = hostRef.current!;
@@ -651,7 +663,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             vertexShader: VERT,
             fragmentShader: FRAG,
             side: THREE.DoubleSide,
-            transparent: false,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.NormalBlending,
           });
           const mesh = new THREE.Mesh(geo, mat);
           scene.add(mesh);
@@ -772,6 +786,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           scene.add(mesh);
           meshRef2.current = mesh;
           heightTexRef2.current = texture;
+          setHeightTexVersion2(v => v + 1)
         } else {
           const mesh = meshRef2.current;
           const mat = mesh!.material as THREE.ShaderMaterial;
@@ -1033,7 +1048,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
               uAboveTerrain: { value: 0.1 },
               uCurrentPosition: { value: rtRead.texture },
               uSimSize: { value: new THREE.Vector2(outW, outH) },
-              uPressure: { value: pressureLevel }
+              uPressure: { value: pressureLevel },
+              zOffset: { value: 0 }
             },
           });
 
@@ -1083,6 +1099,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           mat.uniforms.uGridH.value = texH;
           mat.uniforms.uStep.value = UV_POINTS_STEP;
           mat.uniforms.uAboveTerrain.value = 0.01;
+          mat.uniforms.zOffset.value = 0;
           if (dimsChanged) {
             // Rebuild position attribute to update vertex count
             const outW = Math.ceil(texW / UV_POINTS_STEP);
@@ -1230,65 +1247,144 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     let running = true;
     let simTimeElapsed = 0;
     const simTimeStep = 3000;
-    const simTimeLimit = 250_000;
+    const simTimeLimit = 1_000_000_000_000;
   
-    const loop = () => {
-      if (!running) return;
-      const dt = clock.getDelta();
+  //   const loop = () => {
+  //     if (!running) return;
+  //     const dt = clock.getDelta();
 
-      // 0) stash current viewport/scissor state
-      const prevViewport = new THREE.Vector4();
-      const prevScissor  = new THREE.Vector4();
-      const prevScissorTest = renderer.getScissorTest();
-      renderer.getViewport(prevViewport);   // x,y,w,h
-      renderer.getScissor(prevScissor);     // x,y,w,h
+  //     // 0) stash current viewport/scissor state
+  //     const prevViewport = new THREE.Vector4();
+  //     const prevScissor  = new THREE.Vector4();
+  //     const prevScissorTest = renderer.getScissorTest();
+  //     renderer.getViewport(prevViewport);   // x,y,w,h
+  //     renderer.getScissor(prevScissor);     // x,y,w,h
 
-      // --- SIM UPDATE: render into small RT (no feedback-loop) ---
-      simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
-      if (simTimeElapsed < simTimeLimit){
-        simMat.uniforms.uDt.value   = simTimeStep;
-        simTimeElapsed += simTimeStep;
-      } else {
-        simMat.uniforms.uDt.value = 0;
-      }
+  //     // --- SIM UPDATE: render into small RT (no feedback-loop) ---
+  //     simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
+  //     if (simTimeElapsed < simTimeLimit){
+  //       simMat.uniforms.uDt.value   = simTimeStep;
+  //       simTimeElapsed += simTimeStep;
+  //     } else {
+  //       simMat.uniforms.uDt.value = 0;
+  //     }
       
-      const rt = writePositionRTRef.current!;
-      renderer.setRenderTarget(writePositionRTRef.current!);
-      renderer.setViewport(0, 0, outWRef.current, outHRef.current);
-      renderer.clear();
-      renderer.setScissorTest(false);
-      renderer.render(simScene, simCam);
-      renderer.setRenderTarget(null);
+  //     const rt = writePositionRTRef.current!;
+  //     renderer.setRenderTarget(writePositionRTRef.current!);
+  //     renderer.setViewport(0, 0, outWRef.current, outHRef.current);
+  //     renderer.clear();
+  //     renderer.setScissorTest(false);
+  //     renderer.render(simScene, simCam);
+  //     renderer.setRenderTarget(null);
 
-      // 1) restore viewport/scissor EXACTLY as they were
-      renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-      renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
-      renderer.setScissorTest(prevScissorTest);
+  //     // 1) restore viewport/scissor EXACTLY as they were
+  //     renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+  //     renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
+  //     renderer.setScissorTest(prevScissorTest);
 
-      // --- SWAP ---
-      const tmp = readPositionRTRef.current!;
-      readPositionRTRef.current = writePositionRTRef.current!;
-      writePositionRTRef.current = tmp;
+  //     // --- SWAP ---
+  //     const tmp = readPositionRTRef.current!;
+  //     readPositionRTRef.current = writePositionRTRef.current!;
+  //     writePositionRTRef.current = tmp;
 
-      // make points sample the latest
-      ptsMat.uniforms.uCurrentPosition.value = readPositionRTRef.current.texture;
+  //     // make points sample the latest
+  //     ptsMat.uniforms.uCurrentPosition.value = readPositionRTRef.current.texture;
 
-      // --- render your visible scene as usual ---
-      controls.update();
-      renderer.render(scene, camera);
+  //     // --- render your visible scene as usual ---
+  //     controls.update();
+  //     renderer.render(scene, camera);
+
+  //     requestAnimationFrame(loop);
+  //   };
+  
+  //   requestAnimationFrame(loop);
+  //   return () => { running = false; };
+
+
+  const loop = () => {
+  if (!running) return;
+
+  // stash viewport/scissor once
+  const prevViewport = new THREE.Vector4();
+  const prevScissor  = new THREE.Vector4();
+  const prevScissorTest = renderer.getScissorTest();
+  renderer.getViewport(prevViewport);
+  renderer.getScissor(prevScissor);
+
+  for (const L of windLayersRef.current) {
+    // advance each sim
+    L.simMat.uniforms.uPrev.value = L.readRT.texture;
+    L.simMat.uniforms.uDt.value   = simTimeStep; // or your timing logic
+    renderer.setRenderTarget(L.writeRT);
+    renderer.setViewport(0, 0, L.outW, L.outH);
+    renderer.setScissorTest(false);
+    renderer.clear();
+    renderer.render(L.simScene, L.simCam);
+    renderer.setRenderTarget(null);
+
+    // swap
+    const tmp = L.readRT;
+    L.readRT = L.writeRT;
+    L.writeRT = tmp;
+
+    // points sample the latest
+    L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+  }
+
+  // restore viewport/scissor exactly
+  renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+  renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
+  renderer.setScissorTest(prevScissorTest);
+
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+  };
 
       requestAnimationFrame(loop);
-    };
-  
-    requestAnimationFrame(loop);
     return () => { running = false; };
-  }, [
+
+    }, [
     // restart the loop if these change materially
     heightTexVersion,
     uvDimsRef.current?.w,
     uvDimsRef.current?.h,
   ]);
 
+
   // Fill parent, not window
-  return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;
+  return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
+          <WindUvLayer
+        key={`uv-500-${datehour}-${heightTexVersion2}`}
+        url={`/api/uv/500/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        heightTex={heightTexRef2.current}
+        pressureLevel={500}
+        exaggeration={exaggeration}
+        UV_POINTS_VERT={UV_POINTS_VERT}
+        UV_POINTS_FRAG={UV_POINTS_FRAG}
+        SIM_VERT={SIM_VERT}
+        SIM_FRAG={SIM_FRAG}
+        onReady={(api) => { windLayersRef.current.push(api); }}
+        zOffset={2.5}
+      />
+      <WindUvLayer
+        key={`uv-250-${datehour}-${heightTexVersion}`}
+        url={`/api/uv/250/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        heightTex={heightTexRef.current}
+        pressureLevel={250}
+        exaggeration={exaggeration}
+        UV_POINTS_VERT={UV_POINTS_VERT}
+        UV_POINTS_FRAG={UV_POINTS_FRAG}
+        SIM_VERT={SIM_VERT}
+        SIM_FRAG={SIM_FRAG}
+        onReady={(api) => { windLayersRef.current.push(api); }}
+        zOffset={0.0}
+      />
+    </div>;
 }
