@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import WindUvLayer from "./WindUVLayer";
 import HeightMeshLayer from "./HeightMeshLayer";
+import LandMaskLayer from "./LandMaskLayer";
 
 export const min_max_gph_ranges_glsl = `
 uniform float uPressure;
@@ -393,7 +394,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const hasSetCameraPosition = useRef(false);
   const hasSetCameraPosition2 = useRef(false);
   const hasSetCameraPosition3 = useRef(false);
-  const windLayersRef = useRef<WindLayerAPI[]>([]);
+  const windLayersSetRef = useRef<Set<WindLayerAPI>>(new Set());
+  const [engineReady, setEngineReady] = useState(false);
 
   useEffect(() => {
   const host = hostRef.current!;
@@ -642,8 +644,12 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   sunRef.current = sun;
   roRef.current = ro;
 
+  setEngineReady(true);
+
+
   // Cleanup
   return () => {
+    setEngineReady(false); 
     stopped = true;
     if (rafId != null) cancelAnimationFrame(rafId);
     ro.disconnect();
@@ -703,69 +709,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     (controls as any).update = _origUpdate;
   };
 }, []);
-
-  // Load/replace land mask texture when landUrl changes
-  useEffect(() => {
-    const scene = sceneRef.current;
-    const renderer = rendererRef.current;
-    const camera = cameraRef.current;
-    if (!scene || !landUrl) return;
-
-    const loader = new THREE.TextureLoader();
-    let disposed = false;
-    loader.load(
-      landUrl,
-      (tex) => {
-        if (disposed) {
-          tex.dispose();
-          return;
-        }
-        tex.colorSpace = THREE.NoColorSpace;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.minFilter = THREE.NearestFilter;
-        tex.magFilter = THREE.NearestFilter;
-        tex.generateMipmaps = false;
-        tex.needsUpdate = true;
-
-        landTexRef.current = tex;
-        setLandTexVersion((v) => v + 1);
-        const mesh = meshRef.current;
-        if (mesh) {
-          const mat = mesh.material as THREE.ShaderMaterial;
-          const prevLand = mat.uniforms?.uLandTexture?.value as THREE.Texture | undefined;
-          mat.uniforms.uLandTexture = mat.uniforms.uLandTexture || { value: null };
-          mat.uniforms.uLandTexture.value = tex;
-          if (prevLand) prevLand.dispose();
-        }
-        const mesh2 = meshRef2.current;
-        if (mesh2) {
-          const mat2 = mesh2.material as THREE.ShaderMaterial;
-          const prevLand2 = mat2.uniforms?.uLandTexture?.value as THREE.Texture | undefined;
-          mat2.uniforms.uLandTexture = mat2.uniforms.uLandTexture || { value: null };
-          mat2.uniforms.uLandTexture.value = tex;
-          if (prevLand2) prevLand2.dispose();
-        }
-        const mesh3 = meshRef3.current;
-        if (mesh3) {
-          const mat3 = mesh3.material as THREE.ShaderMaterial;
-          const prevLand3 = mat3.uniforms?.uLandTexture?.value as THREE.Texture | undefined;
-          mat3.uniforms.uLandTexture = mat3.uniforms.uLandTexture || { value: null };
-          mat3.uniforms.uLandTexture.value = tex;
-          if (prevLand3) prevLand3.dispose();
-        }
-        if (renderer && camera && (meshRef.current || meshRef2.current || meshRef3.current)) {
-          renderer.render(scene, camera);
-        }
-      },
-      undefined,
-      () => {}
-    );
-
-    return () => {
-      disposed = true;
-    };
-  }, [landUrl]);
 
   useEffect(() => {
     const renderer = rendererRef.current;
@@ -846,7 +789,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   renderer.getViewport(prevViewport);
   renderer.getScissor(prevScissor);
 
-  for (const L of windLayersRef.current) {
+  for (const L of windLayersSetRef.current) {
     // advance each sim
     L.simMat.uniforms.uPrev.value = L.readRT.texture;
     L.simMat.uniforms.uDt.value   = simTimeStep; // or your timing logic
@@ -886,9 +829,54 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     uvDimsRef.current?.h,
   ]);
 
+  const handleLandTex = useCallback((tex: THREE.Texture) => {
+  landTexRef.current = tex;
+  console.log('land tex')
+  // optionally bump a version if you *need* to react elsewhere
+  // setLandTexVersion(v => v + 1);
+}, []);
+
+const handleGph250 = useCallback((tex: THREE.Texture) => {
+  heightTexRef.current = tex;
+  setHeightTexVersion(v => v + 1);
+}, []);
+
+const handleGph500 = useCallback((tex: THREE.Texture) => {
+  console.log('gph 500')
+  heightTexRef2.current = tex;
+  setHeightTexVersion2(v => v + 1);
+}, []);
+
+const handleGph850 = useCallback((tex: THREE.Texture) => {
+  heightTexRef3.current = tex;
+  setHeightTexVersion3(v => v + 1);
+}, []);
+
+
+const handleWindReady = useCallback((api: WindLayerAPI) => {
+  windLayersSetRef.current.add(api);
+}, []);
+
+const handleWindRemove = useCallback((api: WindLayerAPI) => {
+  windLayersSetRef.current.delete(api);
+}, []);
+
+
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
+{engineReady && (
+  <>
+  
+    <LandMaskLayer
+  landUrl={`/api/landmask`}
+  renderer={rendererRef.current}
+  scene={sceneRef.current}
+  camera={cameraRef.current}
+  // targets={[meshRef.current!, meshRef2.current!, meshRef3.current!]}
+  onTexture={handleLandTex}
+/>
+
           <WindUvLayer
         key={`uv-250-${datehour}-${heightTexVersion}`}
         url={`/api/uv/250/${datehour}`}
@@ -902,14 +890,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         UV_POINTS_FRAG={UV_POINTS_FRAG}
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
-        onReady={(api) => { windLayersRef.current.push(api); }}
-          onRemove={(api) => {
-    const arr = windLayersRef.current;
-    const i = arr.indexOf(api);
-    if (i !== -1) arr.splice(i, 1);
-  }}
+  onReady={handleWindReady}
+  onRemove={handleWindRemove}
         zOffset={0}
-      />
+        />
 
           <WindUvLayer
         key={`uv-500-${datehour}-${heightTexVersion2}`}
@@ -924,14 +908,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         UV_POINTS_FRAG={UV_POINTS_FRAG}
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
-        onReady={(api) => { windLayersRef.current.push(api); }}
-          onRemove={(api) => {
-    const arr = windLayersRef.current;
-    const i = arr.indexOf(api);
-    if (i !== -1) arr.splice(i, 1);
-  }}
+  onReady={handleWindReady}
+  onRemove={handleWindRemove}
         zOffset={0.5}
-      />
+        />
 
             <WindUvLayer
         key={`uv-850-${datehour}-${heightTexVersion3}`}
@@ -946,14 +926,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         UV_POINTS_FRAG={UV_POINTS_FRAG}
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
-        onReady={(api) => { windLayersRef.current.push(api); }}
-          onRemove={(api) => {
-    const arr = windLayersRef.current;
-    const i = arr.indexOf(api);
-    if (i !== -1) arr.splice(i, 1);
-  }}
+  onReady={handleWindReady}
+  onRemove={handleWindRemove}
         zOffset={1.0}
-      />
+        />
 
 
       <HeightMeshLayer
@@ -969,7 +945,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   pressureLevel={250}
   exaggeration={exaggeration}
   zOffset={0}
-  onTextureChange={(tex) => { heightTexRef.current = tex; setHeightTexVersion(v => v + 1); }}
+  onTextureChange={handleGph250}
 />
 
       <HeightMeshLayer
@@ -985,7 +961,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   pressureLevel={500}
   exaggeration={exaggeration}
   zOffset={0.5}
-  onTextureChange={(tex) => { heightTexRef2.current = tex; setHeightTexVersion2(v => v + 1); }}
+  onTextureChange={handleGph500}
 />
 
     <HeightMeshLayer
@@ -1001,7 +977,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   pressureLevel={850}
   exaggeration={exaggeration}
   zOffset={1}
-  onTextureChange={(tex) => { heightTexRef3.current = tex; setHeightTexVersion3(v => v + 1); }}
+  onTextureChange={handleGph850}
 />
+</>
+)}
     </div>;
 }
