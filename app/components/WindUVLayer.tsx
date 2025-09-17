@@ -29,6 +29,7 @@ type Props = {
   SIM_VERT: string;
   SIM_FRAG: string;
   onReady?: (api: WindLayerAPI) => void;
+  onRemove?: (api: WindLayerAPI) => void; 
   zOffset?: number;
 };
 
@@ -45,6 +46,7 @@ export default function WindUvLayer({
   SIM_VERT,
   SIM_FRAG,
 onReady,
+onRemove,
   zOffset,
 }: Props) {
   // --- per-layer refs (do NOT share across layers)
@@ -279,6 +281,10 @@ onReady,
 
     return () => {
       disposed = true;
+        if (apiRef.current && typeof onRemove === "function") {
+          try { onRemove(apiRef.current); } catch {}
+        }
+
       // clean up this layer only
       uvPointsRef.current && scene?.remove(uvPointsRef.current);
       uvPointsRef.current?.geometry?.dispose();
@@ -296,6 +302,8 @@ onReady,
       simSceneRef.current = null;
       simCameraRef.current = null;
       simDimsRef.current = null;
+
+      apiRef.current = null;
     };
   // re-run when these change for THIS layer only
   }, [url, renderer, scene, camera, heightTex, pressureLevel, exaggeration, UV_POINTS_VERT, UV_POINTS_FRAG, SIM_VERT, SIM_FRAG]);

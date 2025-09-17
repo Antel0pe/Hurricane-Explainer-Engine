@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import WindUvLayer from "./WindUVLayer";
+import HeightMeshLayer from "./HeightMeshLayer";
 
 export const min_max_gph_ranges_glsl = `
 uniform float uPressure;
@@ -463,7 +464,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     // If damping loop isn't running, at least render this change once.
     if (!animating) renderOnce();
   });
-  
+
     // ===== Hover-to-rotate (no mousedown) with light inertia =====
   controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
 
@@ -703,571 +704,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   };
 }, []);
 
-
-  // Load/replace texture and update or create the mesh when pngUrl changes
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    const scene = sceneRef.current;
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    const sun = sunRef.current;
-    if (!renderer || !scene || !camera || !controls || !sun) return;
-    if (landTexVersion == 0) return;
-
-    // const pressureLevel = 250;
-    const zOffset = 0;
-
-    const loader = new THREE.TextureLoader();
-    loader.load(
-      pngUrl,
-      (texture) => {
-        texture.colorSpace = THREE.NoColorSpace;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.NearestFilter;
-        texture.magFilter = THREE.NearestFilter;
-        texture.generateMipmaps = false;
-        texture.needsUpdate = true;
-
-        const imageData = texture.image as unknown;
-        let texWidth = 1;
-        let texHeight = 1;
-        if (
-          imageData &&
-          typeof (imageData as { width?: number }).width === "number" &&
-          typeof (imageData as { height?: number }).height === "number"
-        ) {
-          texWidth = (imageData as { width: number }).width;
-          texHeight = (imageData as { height: number }).height;
-        }
-        const aspect = texHeight !== 0 ? texWidth / texHeight : 1.0;
-        const texelSize = new THREE.Vector2(1 / Math.max(1, texWidth), 1 / Math.max(1, texHeight));
-        const uvToWorld = new THREE.Vector2(aspect, 1.0);
-        const lightDir = sun.position.clone().normalize().negate();
-
-        if (!meshRef.current) {
-          const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-          const mat = new THREE.ShaderMaterial({
-            uniforms: {
-              uTexture: { value: texture },
-              uExaggeration: { value: exaggeration ?? 0.5 },
-              uTexelSize: { value: texelSize },
-              uUvToWorld: { value: uvToWorld },
-              uLightDir: { value: lightDir },
-              uLandTexture: { value: landTexRef.current },
-              uPressure: { value: pressureLevel },
-              zOffset: { value: zOffset }
-            },
-            vertexShader: VERT,
-            fragmentShader: FRAG,
-            side: THREE.DoubleSide,
-            transparent: true,
-            depthWrite: false,
-            blending: THREE.NormalBlending,
-          });
-          const mesh = new THREE.Mesh(geo, mat);
-          scene.add(mesh);
-          meshRef.current = mesh;
-          heightTexRef.current = texture;
-          setHeightTexVersion((v) => v + 1);
-        } else {
-          const mesh = meshRef.current;
-          const mat = mesh.material as THREE.ShaderMaterial;
-          const prevTex = mat.uniforms?.uTexture?.value as THREE.Texture | undefined;
-          mat.uniforms.uTexture.value = texture;
-          mat.uniforms.uTexelSize.value = texelSize;
-          mat.uniforms.uUvToWorld.value = uvToWorld;
-          mat.uniforms.uLightDir.value = lightDir;
-          mat.uniforms.uPressure.value = pressureLevel;
-          mat.uniforms.zOffset.value = zOffset;
-          if (prevTex) prevTex.dispose();
-          heightTexRef.current = texture;
-          setHeightTexVersion((v) => v + 1);
-
-          const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-          (mesh.geometry as THREE.BufferGeometry).dispose();
-          mesh.geometry = newGeo;
-        }
-        if (!hasSetCameraPosition.current) {
-            const sphere = new THREE.Sphere();
-            new THREE.Box3().setFromObject(meshRef.current!).getBoundingSphere(sphere);
-            const fov = THREE.MathUtils.degToRad(camera.fov);
-            const dist = sphere.radius / Math.sin(fov / 2);
-            camera.position.set(
-            sphere.center.x,
-            sphere.center.y - dist * 0.2,
-            sphere.center.z + sphere.radius * 2
-            );
-            camera.near = Math.max(0.1, dist * 0.001);
-            camera.far = dist * 10;
-            camera.updateProjectionMatrix();
-            camera.lookAt(sphere.center);
-            controls.target.copy(sphere.center);
-            controls.update();
-
-            hasSetCameraPosition.current = true;
-        }
-
-        renderer.render(scene, camera);
-      },
-      undefined,
-      (err) => {
-        console.error("Texture load error", err);
-      }
-    );
-  }, [pngUrl, exaggeration, landTexVersion]);
-
-  // Second pressure mesh: hardcode URL here
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    const scene = sceneRef.current;
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    const sun = sunRef.current;
-    if (!renderer || !scene || !camera || !controls || !sun) return;
-    if (landTexVersion == 0) return;
-
-    const pressureLevel = 500;
-    const zOffset = 0.5;
-    const pngUrl2 = `/api/gph/500/${datehour}`; 
-    if (!pngUrl2) return;
-
-    const loader = new THREE.TextureLoader();
-    loader.load(
-      pngUrl2,
-      (texture) => {
-        texture.colorSpace = THREE.NoColorSpace;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.NearestFilter;
-        texture.magFilter = THREE.NearestFilter;
-        texture.generateMipmaps = false;
-        texture.needsUpdate = true;
-
-        const imageData = texture.image as unknown;
-        let texWidth = 1;
-        let texHeight = 1;
-        if (
-          imageData &&
-          typeof (imageData as { width?: number }).width === "number" &&
-          typeof (imageData as { height?: number }).height === "number"
-        ) {
-          texWidth = (imageData as { width: number }).width;
-          texHeight = (imageData as { height: number }).height;
-        }
-        const aspect = texHeight !== 0 ? texWidth / texHeight : 1.0;
-        const texelSize = new THREE.Vector2(1 / Math.max(1, texWidth), 1 / Math.max(1, texHeight));
-        const uvToWorld = new THREE.Vector2(aspect, 1.0);
-        const lightDir = sun.position.clone().normalize().negate();
-
-        if (!meshRef2.current) {
-          const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-          const mat = new THREE.ShaderMaterial({
-            uniforms: {
-              uTexture: { value: texture },
-              uExaggeration: { value: exaggeration ?? 0.5 },
-              uTexelSize: { value: texelSize },
-              uUvToWorld: { value: uvToWorld },
-              uLightDir: { value: lightDir },
-              uLandTexture: { value: landTexRef.current },
-              uPressure: { value: pressureLevel },
-              zOffset: { value: zOffset }
-            },
-            vertexShader: VERT,
-            fragmentShader: FRAG,
-            side: THREE.DoubleSide,
-            transparent: true,
-            depthWrite: false,
-            blending: THREE.NormalBlending,
-          });
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.position.z += 0.002; // slight offset
-          scene.add(mesh);
-          meshRef2.current = mesh;
-          heightTexRef2.current = texture;
-          setHeightTexVersion2(v => v + 1);
-        } else {
-          const mesh = meshRef2.current;
-          const mat = mesh!.material as THREE.ShaderMaterial;
-          const prevTex = mat.uniforms?.uTexture?.value as THREE.Texture | undefined;
-          mat.uniforms.uTexture.value = texture;
-          mat.uniforms.uTexelSize.value = texelSize;
-          mat.uniforms.uUvToWorld.value = uvToWorld;
-          mat.uniforms.uLightDir.value = lightDir;
-          mat.uniforms.uPressure.value = pressureLevel;
-          mat.uniforms.zOffset.value = zOffset;
-          if (prevTex) prevTex.dispose();
-          heightTexRef2.current = texture;
-
-          const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-          (mesh!.geometry as THREE.BufferGeometry).dispose();
-          mesh!.geometry = newGeo;
-        }
-
-        if (!hasSetCameraPosition2.current && meshRef2.current) {
-          const sphere = new THREE.Sphere();
-          new THREE.Box3().setFromObject(meshRef2.current).getBoundingSphere(sphere);
-          const fov = THREE.MathUtils.degToRad(camera.fov);
-          const dist = sphere.radius / Math.sin(fov / 2);
-          camera.position.set(
-            sphere.center.x,
-            sphere.center.y - dist * 0.2,
-            sphere.center.z + sphere.radius * 2
-          );
-          camera.near = Math.max(0.1, dist * 0.001);
-          camera.far = dist * 10;
-          camera.updateProjectionMatrix();
-          camera.lookAt(sphere.center);
-          controls.target.copy(sphere.center);
-          controls.update();
-          hasSetCameraPosition2.current = true;
-        }
-
-        renderer.render(scene, camera);
-      },
-      undefined,
-      (err) => {
-        console.error("Texture load error (mesh2)", err);
-      }
-    );
-  }, [exaggeration, landTexVersion, datehour]);
-
-  // Third pressure mesh: hardcode URL here
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    const scene = sceneRef.current;
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    const sun = sunRef.current;
-    if (!renderer || !scene || !camera || !controls || !sun) return;
-    if (landTexVersion == 0) return;
-
-    const pressureLevel = 850;
-    const zOffset = 1.0;
-    const pngUrl3 = `/api/gph/850/${datehour}`; 
-    if (!pngUrl3) return;
-
-    const loader = new THREE.TextureLoader();
-    loader.load(
-      pngUrl3,
-      (texture) => {
-        texture.colorSpace = THREE.NoColorSpace;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.NearestFilter;
-        texture.magFilter = THREE.NearestFilter;
-        texture.generateMipmaps = false;
-        texture.needsUpdate = true;
-
-        const imageData = texture.image as unknown;
-        let texWidth = 1;
-        let texHeight = 1;
-        if (
-          imageData &&
-          typeof (imageData as { width?: number }).width === "number" &&
-          typeof (imageData as { height?: number }).height === "number"
-        ) {
-          texWidth = (imageData as { width: number }).width;
-          texHeight = (imageData as { height: number }).height;
-        }
-        const aspect = texHeight !== 0 ? texWidth / texHeight : 1.0;
-        const texelSize = new THREE.Vector2(1 / Math.max(1, texWidth), 1 / Math.max(1, texHeight));
-        const uvToWorld = new THREE.Vector2(aspect, 1.0);
-        const lightDir = sun.position.clone().normalize().negate();
-
-        if (!meshRef3.current) {
-          const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-          const mat = new THREE.ShaderMaterial({
-            uniforms: {
-              uTexture: { value: texture },
-              uExaggeration: { value: exaggeration ?? 0.5 },
-              uTexelSize: { value: texelSize },
-              uUvToWorld: { value: uvToWorld },
-              uLightDir: { value: lightDir },
-              uLandTexture: { value: landTexRef.current },
-              uPressure: { value: pressureLevel },
-              zOffset: { value: zOffset }
-            },
-            vertexShader: VERT,
-            fragmentShader: FRAG,
-            side: THREE.DoubleSide,
-              transparent: true,
-  depthWrite: false,
-            blending: THREE.NormalBlending,
-          });
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.position.z += 0.004; // slight offset
-          scene.add(mesh);
-          meshRef3.current = mesh;
-          heightTexRef3.current = texture;
-          setHeightTexVersion3(v => v + 1);
-        } else {
-          const mesh = meshRef3.current;
-          const mat = mesh!.material as THREE.ShaderMaterial;
-          const prevTex = mat.uniforms?.uTexture?.value as THREE.Texture | undefined;
-          mat.uniforms.uTexture.value = texture;
-          mat.uniforms.uTexelSize.value = texelSize;
-          mat.uniforms.uUvToWorld.value = uvToWorld;
-          mat.uniforms.uLightDir.value = lightDir;
-          mat.uniforms.uPressure.value = pressureLevel;
-          mat.uniforms.zOffset.value = zOffset;
-          if (prevTex) prevTex.dispose();
-          heightTexRef3.current = texture;
-
-          const newGeo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
-          (mesh!.geometry as THREE.BufferGeometry).dispose();
-          mesh!.geometry = newGeo;
-        }
-
-        if (!hasSetCameraPosition3.current && meshRef3.current) {
-          const sphere = new THREE.Sphere();
-          new THREE.Box3().setFromObject(meshRef3.current).getBoundingSphere(sphere);
-          const fov = THREE.MathUtils.degToRad(camera.fov);
-          const dist = sphere.radius / Math.sin(fov / 2);
-          camera.position.set(
-            sphere.center.x,
-            sphere.center.y - dist * 0.2,
-            sphere.center.z + sphere.radius * 2
-          );
-          camera.near = Math.max(0.1, dist * 0.001);
-          camera.far = dist * 10;
-          camera.updateProjectionMatrix();
-          camera.lookAt(sphere.center);
-          controls.target.copy(sphere.center);
-          controls.update();
-          hasSetCameraPosition3.current = true;
-        }
-
-        renderer.render(scene, camera);
-      },
-      undefined,
-      (err) => {
-        console.error("Texture load error (mesh3)", err);
-      }
-    );
-  }, [exaggeration, landTexVersion, datehour]);
-
-  // Load/replace UV wind texture and create/update a persistent point cloud
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    const scene = sceneRef.current;
-    const camera = cameraRef.current;
-    if (!renderer || !scene || !camera || !uvUrl) return;
-
-    const loader = new THREE.TextureLoader();
-    let disposed = false;
-    loader.load(
-      uvUrl,
-      (texture) => {
-        if (disposed) {
-          texture.dispose();
-          return;
-        }
-        texture.colorSpace = THREE.NoColorSpace;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.NearestFilter;
-        texture.magFilter = THREE.NearestFilter;
-        texture.generateMipmaps = false;
-        texture.needsUpdate = true;
-
-        // Read texture size
-        const img = texture.image as unknown as { width?: number; height?: number };
-        const texW = typeof img?.width === "number" ? img.width : 0;
-        const texH = typeof img?.height === "number" ? img.height : 0;
-        if (texW === 0 || texH === 0) {
-          // can't build point cloud without dims
-          uvTexRef.current?.dispose();
-          uvTexRef.current = texture;
-          return;
-        }
-
-        const aspect = texH !== 0 ? texW / texH : 1.0;
-        const dimsChanged = !uvDimsRef.current || uvDimsRef.current.w !== texW || uvDimsRef.current.h !== texH;
-        const UV_POINTS_STEP = 25; // subsampling step for UV points grid
-        // Build or update geometry (positions on a centered grid of size aspect x 1)
-        if (!uvPointsRef.current) {
-          // Create geometry with a minimal position attribute (count=W*H) required by Three/WebGL
-          const geo = new THREE.BufferGeometry();
-          const outW = Math.ceil(texW / UV_POINTS_STEP);
-          const outH = Math.ceil(texH / UV_POINTS_STEP);
-          outWRef.current = outW;
-          outHRef.current = outH;
-          const count = outW * outH;
-          geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-
-          // Create zero-initialized RG float render targets for offsets (prev/curr)
-          const rtOptions: THREE.RenderTargetOptions = {
-            type: THREE.FloatType,
-            format: THREE.RGBAFormat,
-            minFilter: THREE.NearestFilter,
-            magFilter: THREE.NearestFilter,
-            wrapS: THREE.ClampToEdgeWrapping,
-            wrapT: THREE.ClampToEdgeWrapping,
-            depthBuffer: false,
-            stencilBuffer: false,
-          };
-          const rtRead = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
-          const rtWrite = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
-          rtRead.texture.generateMipmaps = false;
-          rtWrite.texture.generateMipmaps = false;
-
-          // Clear both to zeros
-          const prevClearColor = renderer.getClearColor(new THREE.Color()).clone();
-          const prevClearAlpha = renderer.getClearAlpha();
-          renderer.setRenderTarget(rtRead);
-          renderer.setClearColor(0x000000, 0);
-          renderer.clear(true, false, false);
-          renderer.setRenderTarget(rtWrite);
-          renderer.clear(true, false, false);
-          renderer.setRenderTarget(null);
-          renderer.setClearColor(prevClearColor, prevClearAlpha);
-
-          // Stash and expose via uniforms
-          readPositionRTRef.current?.dispose();
-          writePositionRTRef.current?.dispose();
-          readPositionRTRef.current = rtRead;
-          writePositionRTRef.current = rtWrite;
-          simDimsRef.current = { w: outW, h: outH };
-
-          // Create material with required uniforms
-          const mat = new THREE.ShaderMaterial({
-            vertexShader: UV_POINTS_VERT,
-            fragmentShader: UV_POINTS_FRAG,
-            transparent: true,
-            blending: THREE.NormalBlending,
-            depthTest: true,
-            glslVersion: THREE.GLSL3,
-            uniforms: {
-              uTerrainTexture: { value: heightTexRef.current },
-              uExaggeration: { value: exaggeration ?? 0.5 },
-              uAspect: { value: aspect },
-              uPointSize: { value: (1.5 * (window.devicePixelRatio || 1)) * 3.0 },
-              uGridW: { value: texW },
-              uGridH: { value: texH },
-              uStep: { value: UV_POINTS_STEP },
-              uAboveTerrain: { value: 0.1 },
-              uCurrentPosition: { value: rtRead.texture },
-              uSimSize: { value: new THREE.Vector2(outW, outH) },
-              uPressure: { value: pressureLevel },
-              zOffset: { value: 0 }
-            },
-          });
-
-          if (!simSceneRef.current) {
-            const simScene = new THREE.Scene();
-            const simCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            const simGeom  = new THREE.PlaneGeometry(2, 2);
-            const simMat   = new THREE.ShaderMaterial({
-              glslVersion: THREE.GLSL3,
-              vertexShader: SIM_VERT,
-              fragmentShader: SIM_FRAG,
-              uniforms: {
-                uPrev:   { value: readPositionRTRef.current.texture },
-                uDt:     { value: 0 },
-                uSpeed:  { value: 0.5 },        // NDC units per second
-                uSize:   { value: new THREE.Vector2(outW, outH) }, // will bind as ivec2
-                uWindTexture: { value: texture }
-              },
-            });
-            simScene.add(new THREE.Mesh(simGeom, simMat));
-            simSceneRef.current  = simScene;
-            simCameraRef.current = simCam;
-            simMatRef.current    = simMat;
-          } else {
-            // If somehow already present, at least sync uniforms
-            simMatRef.current!.uniforms.uPrev.value = writePositionRTRef.current.texture;
-            simMatRef.current!.uniforms.uSize.value = new THREE.Vector2(outW, outH);
-          }
-
-          const pts = new THREE.Points(geo, mat);
-          scene.add(pts);
-          uvPointsRef.current = pts;
-          uvGeoRef.current = geo;
-          uvMatRef.current = mat;
-          uvTexRef.current?.dispose();
-          uvTexRef.current = texture;
-          uvDimsRef.current = { w: texW, h: texH };
-        } else {
-          // Update existing
-          const mat = uvMatRef.current as (THREE.ShaderMaterial & { uniforms: Record<string, { value: unknown }> });
-          const geo = uvGeoRef.current!;
-          mat.uniforms.uTerrainTexture.value = heightTexRef.current;
-          mat.uniforms.uExaggeration.value = typeof exaggeration === 'number' ? exaggeration : 0.5;
-          mat.uniforms.uAspect.value = aspect;
-          mat.uniforms.uPointSize.value = (1.5 * (window.devicePixelRatio || 1)) * 3.0;
-          mat.uniforms.uGridW.value = texW;
-          mat.uniforms.uGridH.value = texH;
-          mat.uniforms.uStep.value = UV_POINTS_STEP;
-          mat.uniforms.uAboveTerrain.value = 0.01;
-          mat.uniforms.zOffset.value = 0;
-          if (dimsChanged) {
-            // Rebuild position attribute to update vertex count
-            const outW = Math.ceil(texW / UV_POINTS_STEP);
-            const outH = Math.ceil(texH / UV_POINTS_STEP);
-            const count = outW * outH;
-            geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-            uvDimsRef.current = { w: texW, h: texH };
-
-            // Recreate and zero-initialize offset render targets for new size
-            readPositionRTRef.current?.dispose();
-            writePositionRTRef.current?.dispose();
-            const rtOptions: THREE.RenderTargetOptions = {
-              type: THREE.FloatType,
-              format: THREE.RGBAFormat,
-              minFilter: THREE.NearestFilter,
-              magFilter: THREE.NearestFilter,
-              wrapS: THREE.ClampToEdgeWrapping,
-              wrapT: THREE.ClampToEdgeWrapping,
-              depthBuffer: false,
-              stencilBuffer: false,
-            };
-            const rtRead = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
-            const rtWrite = new THREE.WebGLRenderTarget(outW, outH, rtOptions);
-            rtRead.texture.generateMipmaps = false;
-            rtWrite.texture.generateMipmaps = false;
-
-            const prevClearColor = renderer.getClearColor(new THREE.Color()).clone();
-            const prevClearAlpha = renderer.getClearAlpha();
-            renderer.setRenderTarget(rtRead);
-            renderer.setClearColor(0x000000, 0);
-            renderer.clear(true, false, false);
-            renderer.setRenderTarget(rtWrite);
-            renderer.clear(true, false, false);
-            renderer.setRenderTarget(null);
-            renderer.setClearColor(prevClearColor, prevClearAlpha);
-
-            readPositionRTRef.current = rtRead;
-            writePositionRTRef.current = rtWrite;
-            simDimsRef.current = { w: outW, h: outH };
-
-            mat.uniforms.uPrev = mat.uniforms.uPrev || { value: null };
-            mat.uniforms.uSimSize = mat.uniforms.uSimSize || { value: new THREE.Vector2() };
-            mat.uniforms.uPrev.value = readPositionRTRef.current.texture;
-            mat.uniforms.uSimSize.value = new THREE.Vector2(outW, outH);
-          } else {
-            // Keep uniforms in sync
-            mat.uniforms.uPrev = mat.uniforms.uPrev || { value: null };
-            mat.uniforms.uSimSize = mat.uniforms.uSimSize || { value: new THREE.Vector2() };
-            mat.uniforms.uPrev.value = readPositionRTRef.current ? readPositionRTRef.current.texture : null;
-            const dims = simDimsRef.current || { w: Math.ceil(texW / UV_POINTS_STEP), h: Math.ceil(texH / UV_POINTS_STEP) };
-            mat.uniforms.uSimSize.value = new THREE.Vector2(dims.w, dims.h);
-          }
-          uvTexRef.current?.dispose();
-          uvTexRef.current = texture;
-        }
-
-        renderer.render(scene, camera);
-      },
-      undefined,
-      () => {}
-    );
-
-    return () => {
-      disposed = true;
-    };
-  }, [uvUrl, exaggeration, heightTexVersion]);
-
   // Load/replace land mask texture when landUrl changes
   useEffect(() => {
     const scene = sceneRef.current;
@@ -1336,13 +772,8 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     const scene    = sceneRef.current;
     const camera   = cameraRef.current;
     const controls = controlsRef.current;
-    const simScene = simSceneRef.current;
-    const simCam   = simCameraRef.current;
-    const simMat   = simMatRef.current;
-    const ptsMat   = uvMatRef.current;
-    const dims     = simDimsRef.current;
-  
-    if (!renderer || !scene || !camera || !controls || !simScene || !simCam || !simMat || !ptsMat || !dims) return;
+    
+    if (!renderer || !scene || !camera || !controls) return;
   
     const clock = new THREE.Clock();
     let running = true;
@@ -1350,6 +781,9 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     const simTimeStep = 3000;
     const simTimeLimit = 1_000_000_000_000;
   
+
+
+    // IMPLEMENT TIMING LOGIC AS SHOWN HERE FOR THE SIMS!
   //   const loop = () => {
   //     if (!running) return;
   //     const dt = clock.getDelta();
@@ -1456,22 +890,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
           <WindUvLayer
-        key={`uv-500-${datehour}-${heightTexVersion2}`}
-        url={`/api/uv/500/${datehour}`}
-        renderer={rendererRef.current}
-        scene={sceneRef.current}
-        camera={cameraRef.current}
-        heightTex={heightTexRef2.current}
-        pressureLevel={500}
-        exaggeration={exaggeration}
-        UV_POINTS_VERT={UV_POINTS_VERT}
-        UV_POINTS_FRAG={UV_POINTS_FRAG}
-        SIM_VERT={SIM_VERT}
-        SIM_FRAG={SIM_FRAG}
-        onReady={(api) => { windLayersRef.current.push(api); }}
-        zOffset={0.5}
-      />
-      <WindUvLayer
         key={`uv-250-${datehour}-${heightTexVersion}`}
         url={`/api/uv/250/${datehour}`}
         renderer={rendererRef.current}
@@ -1485,7 +903,34 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
         onReady={(api) => { windLayersRef.current.push(api); }}
+          onRemove={(api) => {
+    const arr = windLayersRef.current;
+    const i = arr.indexOf(api);
+    if (i !== -1) arr.splice(i, 1);
+  }}
         zOffset={0}
+      />
+
+          <WindUvLayer
+        key={`uv-500-${datehour}-${heightTexVersion2}`}
+        url={`/api/uv/500/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        heightTex={heightTexRef2.current}
+        pressureLevel={500}
+        exaggeration={exaggeration}
+        UV_POINTS_VERT={UV_POINTS_VERT}
+        UV_POINTS_FRAG={UV_POINTS_FRAG}
+        SIM_VERT={SIM_VERT}
+        SIM_FRAG={SIM_FRAG}
+        onReady={(api) => { windLayersRef.current.push(api); }}
+          onRemove={(api) => {
+    const arr = windLayersRef.current;
+    const i = arr.indexOf(api);
+    if (i !== -1) arr.splice(i, 1);
+  }}
+        zOffset={0.5}
       />
 
             <WindUvLayer
@@ -1502,7 +947,61 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
         onReady={(api) => { windLayersRef.current.push(api); }}
+          onRemove={(api) => {
+    const arr = windLayersRef.current;
+    const i = arr.indexOf(api);
+    if (i !== -1) arr.splice(i, 1);
+  }}
         zOffset={1.0}
       />
+
+
+      <HeightMeshLayer
+  url={`/api/gph/250/${datehour}`}
+  renderer={rendererRef.current}
+  scene={sceneRef.current}
+  camera={cameraRef.current}
+  controls={controlsRef.current}
+  sun={sunRef.current}
+  VERT={VERT}
+  FRAG={FRAG}
+  landTexture={landTexRef.current}
+  pressureLevel={250}
+  exaggeration={exaggeration}
+  zOffset={0}
+  onTextureChange={(tex) => { heightTexRef.current = tex; setHeightTexVersion(v => v + 1); }}
+/>
+
+      <HeightMeshLayer
+  url={`/api/gph/500/${datehour}`}
+  renderer={rendererRef.current}
+  scene={sceneRef.current}
+  camera={cameraRef.current}
+  controls={controlsRef.current}
+  sun={sunRef.current}
+  VERT={VERT}
+  FRAG={FRAG}
+  landTexture={landTexRef.current}
+  pressureLevel={500}
+  exaggeration={exaggeration}
+  zOffset={0.5}
+  onTextureChange={(tex) => { heightTexRef2.current = tex; setHeightTexVersion2(v => v + 1); }}
+/>
+
+    <HeightMeshLayer
+  url={`/api/gph/850/${datehour}`}
+  renderer={rendererRef.current}
+  scene={sceneRef.current}
+  camera={cameraRef.current}
+  controls={controlsRef.current}
+  sun={sunRef.current}
+  VERT={VERT}
+  FRAG={FRAG}
+  landTexture={landTexRef.current}
+  pressureLevel={850}
+  exaggeration={exaggeration}
+  zOffset={1}
+  onTextureChange={(tex) => { heightTexRef3.current = tex; setHeightTexVersion3(v => v + 1); }}
+/>
     </div>;
 }
