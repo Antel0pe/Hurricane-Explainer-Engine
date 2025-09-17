@@ -53,3 +53,4 @@ ways to make wind particles better
 - rk4
 - cos stuff since it's on earth
 - in encoding dont scale with min/max, scale with defined units
+- color particles by altitude?

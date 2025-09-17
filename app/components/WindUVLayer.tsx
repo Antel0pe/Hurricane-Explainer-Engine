@@ -191,6 +191,9 @@ onReady,
           }
 
           const pts = new THREE.Points(geo, mat);
+          // potential performance bottleneck since disables threejs from not rendering things that arent visible
+          // in this case makes sense because currently want particles always rendered
+          pts.frustumCulled = false;
           scene.add(pts);
 
           uvPointsRef.current = pts;

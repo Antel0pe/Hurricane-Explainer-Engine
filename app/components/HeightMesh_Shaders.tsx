@@ -371,6 +371,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const [landTexVersion, setLandTexVersion] = useState(0);
   const [heightTexVersion, setHeightTexVersion] = useState(0);
   const [heightTexVersion2, setHeightTexVersion2] = useState(0);
+  const [heightTexVersion3, setHeightTexVersion3] = useState(0);
   const heightTexRef = useRef<THREE.Texture | null>(null);
   const heightTexRef2 = useRef<THREE.Texture | null>(null);
   const heightTexRef3 = useRef<THREE.Texture | null>(null);
@@ -730,7 +731,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     if (landTexVersion == 0) return;
 
     const pressureLevel = 500;
-    const zOffset = 2.5;
+    const zOffset = 0.5;
     const pngUrl2 = `/api/gph/500/${datehour}`; 
     if (!pngUrl2) return;
 
@@ -778,15 +779,16 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             vertexShader: VERT,
             fragmentShader: FRAG,
             side: THREE.DoubleSide,
-              transparent: true,
-  depthWrite: false,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.NormalBlending,
           });
           const mesh = new THREE.Mesh(geo, mat);
           mesh.position.z += 0.002; // slight offset
           scene.add(mesh);
           meshRef2.current = mesh;
           heightTexRef2.current = texture;
-          setHeightTexVersion2(v => v + 1)
+          setHeightTexVersion2(v => v + 1);
         } else {
           const mesh = meshRef2.current;
           const mat = mesh!.material as THREE.ShaderMaterial;
@@ -844,7 +846,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     if (landTexVersion == 0) return;
 
     const pressureLevel = 850;
-    const zOffset = 5;
+    const zOffset = 1.0;
     const pngUrl3 = `/api/gph/850/${datehour}`; 
     if (!pngUrl3) return;
 
@@ -894,12 +896,14 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
             side: THREE.DoubleSide,
               transparent: true,
   depthWrite: false,
+            blending: THREE.NormalBlending,
           });
           const mesh = new THREE.Mesh(geo, mat);
           mesh.position.z += 0.004; // slight offset
           scene.add(mesh);
           meshRef3.current = mesh;
           heightTexRef3.current = texture;
+          setHeightTexVersion3(v => v + 1);
         } else {
           const mesh = meshRef3.current;
           const mat = mesh!.material as THREE.ShaderMaterial;
@@ -1368,7 +1372,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
         onReady={(api) => { windLayersRef.current.push(api); }}
-        zOffset={2.5}
+        zOffset={0.5}
       />
       <WindUvLayer
         key={`uv-250-${datehour}-${heightTexVersion}`}
@@ -1384,7 +1388,24 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         SIM_VERT={SIM_VERT}
         SIM_FRAG={SIM_FRAG}
         onReady={(api) => { windLayersRef.current.push(api); }}
-        zOffset={0.0}
+        zOffset={0}
+      />
+
+            <WindUvLayer
+        key={`uv-850-${datehour}-${heightTexVersion3}`}
+        url={`/api/uv/850/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        heightTex={heightTexRef3.current}
+        pressureLevel={850}
+        exaggeration={exaggeration}
+        UV_POINTS_VERT={UV_POINTS_VERT}
+        UV_POINTS_FRAG={UV_POINTS_FRAG}
+        SIM_VERT={SIM_VERT}
+        SIM_FRAG={SIM_FRAG}
+        onReady={(api) => { windLayersRef.current.push(api); }}
+        zOffset={1.0}
       />
     </div>;
 }
