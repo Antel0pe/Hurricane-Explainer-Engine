@@ -2,6 +2,8 @@
 "use client";
 import * as THREE from "three";
 import { useEffect, useRef } from "react";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
 
 export type HeightMeshAPI = {
   mesh: THREE.Mesh;
@@ -17,7 +19,7 @@ type Props = {
   renderer: THREE.WebGLRenderer | null;
   scene: THREE.Scene | null;
   camera: THREE.Camera | null;
-  controls: any | null; // OrbitControls
+  controls: OrbitControls | null; // OrbitControls
   sun: THREE.Object3D | null; // e.g., DirectionalLight
 
   // shading
@@ -155,7 +157,7 @@ export default function HeightMeshLayer({
           new THREE.Box3().setFromObject(mesh).getBoundingSphere(sphere);
 
           // assume PerspectiveCamera if it has fov
-          if ((camera as any).fov) {
+          if (camera instanceof THREE.PerspectiveCamera) {
             const cam = camera as THREE.PerspectiveCamera;
             const fov = THREE.MathUtils.degToRad(cam.fov);
             const dist = sphere.radius / Math.sin(fov / 2);

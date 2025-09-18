@@ -1,3 +1,4 @@
+// HeightMesh_Shaders.tsx
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
@@ -535,12 +536,12 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   };
 
   // hook our step into your damped RAF loop
-  const _origUpdate = controls.update.bind(controls);
-  controls.update = (...args: any[]) => {
+  const _origUpdate = controls.update.bind(controls) as () => boolean;
+  controls.update = (): boolean => {
     // first, apply our orbit step so camera is up-to-date
     applyOrbitStep();
     // then run the normal OrbitControls update (handles zoom limits, etc.)
-    return _origUpdate(...args);
+    return _origUpdate();
   };
 
   elem.addEventListener('mousemove', onMouseMove);
@@ -706,7 +707,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   
     elem.removeEventListener('mousemove', onMouseMove);
     // restore controls.update if you like (optional in most apps)
-    (controls as any).update = _origUpdate;
+    controls.update = _origUpdate;
   };
 }, []);
 
@@ -720,7 +721,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   
     const clock = new THREE.Clock();
     let running = true;
-    let simTimeElapsed = 0;
+    const simTimeElapsed = 0;
     const simTimeStep = 3000;
     const simTimeLimit = 1_000_000_000_000;
   
