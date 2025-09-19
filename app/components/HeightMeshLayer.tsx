@@ -55,7 +55,7 @@ export default function HeightMeshLayer({
   exaggeration,
   zOffset = 0,
   enabled = true,
-  autoFrameOnce = true,
+  autoFrameOnce = false,
   onReady,
   onTextureChange,
 }: Props) {

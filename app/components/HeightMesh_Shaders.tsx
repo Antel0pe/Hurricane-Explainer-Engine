@@ -6,6 +6,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import WindUvLayer from "./WindUVLayer";
 import HeightMeshLayer from "./HeightMeshLayer";
 import LandMaskLayer from "./LandMaskLayer";
+import ThreeGlobe from 'three-globe';
 
 export const min_max_gph_ranges_glsl = `
 uniform float uPressure;
@@ -49,19 +50,56 @@ const get_position_z_shared_glsl = `
   }
 `;
 
+const mapUVtoLatLng = `
+  float globeRadius = 100.0;
+  
+  // deg→rad
+  float d2r(float d) { return d * 0.017453292519943295; }
+
+  // lat/lon (degrees) -> XYZ in three-globe orientation
+    vec3 latLonToXYZ(float latDeg, float lonDeg, float radius) {
+      float phi   = d2r(90.0 - latDeg);       // polar
+      float theta = d2r(lonDeg + 270.0);      // azimuth
+      float x = radius * sin(phi) * cos(theta);
+      float z =  -radius * sin(phi) * sin(theta);
+      float y =  radius * cos(phi);
+      return vec3(x, y, z);
+    }
+// vec3 latLonToXYZ(float latDeg, float lonDeg, float R) {
+//   float latR = radians(latDeg);
+//   float lonR = radians(lonDeg);
+//   float cl = cos(latR), sl = sin(latR);
+//   float x = -R * cl * cos(lonR);  // three-globe handedness
+//   float y =  R * sl;              // <-- keep Y-up
+//   float z =  R * cl * sin(lonR);
+//   return vec3(x, -y, z);           // <-- no (x,-z,y)
+// }
+
+  // get lat/lon from uv
+  vec2 getLatLon(vec2 uv){
+    return vec2(mix(  90.0, -90.0, uv.y), mix(-180.0, 180.0, uv.x));
+  }
+`
+
 // Vertex shader: displace plane along Z using decoded elevation
 const VERT = `
+  precision highp float;
   varying vec2 vUv;
   uniform sampler2D uTexture;
   uniform float uExaggeration;
   uniform float zOffset;
 
   ${get_position_z_shared_glsl}
+  ${mapUVtoLatLng}
 
   void main() {
     vUv = uv;
+    vec2 latlon = getLatLon(uv);
     vec3 pos = position;
-    pos.z = position.z + get_position_z(uTexture, uv, uExaggeration) + zOffset;
+    float altitude = get_position_z(uTexture, uv, uExaggeration) + zOffset;
+    // altitude = clamp(altitude, -5.0, 5.0);
+    pos.z = position.z + altitude;
+    pos = latLonToXYZ(latlon.x, latlon.y, globeRadius + pos.z + 10.0);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `;
@@ -121,7 +159,7 @@ const FRAG = `
     vec3 landRgb = texture2D(uLandTexture, vUv).rgb;
     float landWhiteLevel = max(max(landRgb.r, landRgb.g), landRgb.b);
     float isLand = step(0.5, 1.0 - landWhiteLevel);
-    color = mix(color, vec3(0.0), isLand * 0.25);
+    color = mix(color, vec3(0.0), isLand * 1.0);
 
     gl_FragColor = vec4(color, 0.5);
   }
@@ -417,12 +455,22 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf7f9fc);
 
+  const globe = new ThreeGlobe()
+    .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-day.jpg');
+  scene.add(globe);
+
   const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1e9);
   camera.up.set(0, 0, 1);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
+
+  // let three globe load in
+  camera.position.set(0, -300, 150);  // any non-zero radius > 100 works
+controls.target.set(0, 0, 0);
+controls.update();
+renderer.render(scene, camera);    
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.55));
   const sun = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -564,7 +612,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const pressed = new Set<string>();
   let moving = false;
   let lastT = performance.now();
-  const SPEED = 2; // world units/sec; adjust to taste
+  const SPEED = 20; // world units/sec; adjust to taste
 
   const onKeyDown = (e: KeyboardEvent) => {
     const k = e.key.toLowerCase();
@@ -878,7 +926,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onTexture={handleLandTex}
 />
 
-          <WindUvLayer
+          {/* <WindUvLayer
         key={`uv-250-${datehour}-${heightTexVersion}`}
         url={`/api/uv/250/${datehour}`}
         renderer={rendererRef.current}
@@ -894,9 +942,9 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onReady={handleWindReady}
   onRemove={handleWindRemove}
         zOffset={0}
-        />
+        /> */}
 
-          <WindUvLayer
+          {/* <WindUvLayer
         key={`uv-500-${datehour}-${heightTexVersion2}`}
         url={`/api/uv/500/${datehour}`}
         renderer={rendererRef.current}
@@ -912,9 +960,9 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onReady={handleWindReady}
   onRemove={handleWindRemove}
         zOffset={0.5}
-        />
+        /> */}
 
-            <WindUvLayer
+            {/* <WindUvLayer
         key={`uv-850-${datehour}-${heightTexVersion3}`}
         url={`/api/uv/850/${datehour}`}
         renderer={rendererRef.current}
@@ -930,7 +978,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onReady={handleWindReady}
   onRemove={handleWindRemove}
         zOffset={1.0}
-        />
+        /> */}
 
 
       <HeightMeshLayer
@@ -949,7 +997,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onTextureChange={handleGph250}
 />
 
-      <HeightMeshLayer
+      {/* <HeightMeshLayer
   url={`/api/gph/500/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -963,9 +1011,9 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={0.5}
   onTextureChange={handleGph500}
-/>
+/> */}
 
-    <HeightMeshLayer
+    {/* <HeightMeshLayer
   url={`/api/gph/850/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -979,7 +1027,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={1}
   onTextureChange={handleGph850}
-/>
+/> */}
 </>
 )}
     </div>;

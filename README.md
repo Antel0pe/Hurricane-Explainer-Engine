@@ -64,3 +64,4 @@ future ideas:
     - need to disable stretch in this line
     - // WHEN MOVING TO GLOBE RATHER THAN RECTANGLE, REMOVE COSPHI
     - float du = (dlon_deg / 360.0) * cosphi;
+- color particles by temperature. this would help with telling what altitude particles are on

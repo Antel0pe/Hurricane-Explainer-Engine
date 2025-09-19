@@ -32,9 +32,8 @@ export default function LandMaskLayer({
         if (disposed) { tex.dispose(); return; }
 
         // Texture setup
+        tex.flipY = false;                         // keep v=0 at north
         tex.colorSpace = THREE.NoColorSpace;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
         tex.minFilter = THREE.NearestFilter;
         tex.magFilter = THREE.NearestFilter;
         tex.generateMipmaps = false;
