@@ -460,7 +460,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   scene.add(globe);
 
   const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1e9);
-  camera.up.set(0, 0, 1);
+  camera.up.set(0, 1, 0);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -520,157 +520,202 @@ renderer.render(scene, camera);
   controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
 
   // pull bounds from controls so your existing settings still apply
-  const minAz = controls.minAzimuthAngle ?? -Infinity;
-  const maxAz = controls.maxAzimuthAngle ??  Infinity;
-  const minPh = controls.minPolarAngle   ??  0;
-  const maxPh = controls.maxPolarAngle   ??  Math.PI;
+  // const minAz = controls.minAzimuthAngle ?? -Infinity;
+  // const maxAz = controls.maxAzimuthAngle ??  Infinity;
+  // const minPh = controls.minPolarAngle   ??  0;
+  // const maxPh = controls.maxPolarAngle   ??  Math.PI;
 
-  const elem = renderer.domElement;
-  const up   = camera.up.clone().normalize();
+  // const elem = renderer.domElement;
+  // const up   = camera.up.clone().normalize();
 
-  // Map camera.up -> +Y like OrbitControls does
-  const quat = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
-  const quatInv = quat.clone().invert();
+  // // Map camera.up -> +Y like OrbitControls does
+  // const quat = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
+  // const quatInv = quat.clone().invert();
 
-  const spherical = new THREE.Spherical();
-  const offset    = new THREE.Vector3();
+  // const spherical = new THREE.Spherical();
+  // const offset    = new THREE.Vector3();
 
-  // mouse→angle scaling similar to OrbitControls
-  const ROTATE_SPEED = controls.rotateSpeed; // default 1.0
-  const scale = (px: number) => (2 * Math.PI * px / elem.clientHeight) * ROTATE_SPEED;
+  // // mouse→angle scaling similar to OrbitControls
+  // const ROTATE_SPEED = controls.rotateSpeed; // default 1.0
+  // const scale = (px: number) => (2 * Math.PI * px / elem.clientHeight) * ROTATE_SPEED;
 
-  // simple inertia to mimic damping
-  let vTheta = 0, vPhi = 0;           // angular velocity
-  const INERTIA = 0.10;               // 0..1 (higher = more glide)
-  const GAIN    = 0.5;               // 0..1 (how much new mouse delta feeds in)
+  // // simple inertia to mimic damping
+  // let vTheta = 0, vPhi = 0;           // angular velocity
+  // const INERTIA = 0.10;               // 0..1 (higher = more glide)
+  // const GAIN    = 0.5;               // 0..1 (how much new mouse delta feeds in)
 
-  const onMouseMove = (e: MouseEvent) => {
-    if (e.target !== elem) return;
-    const dx = (e.movementX ?? 0);
-    const dy = (e.movementY ?? 0);
+  // const onMouseMove = (e: MouseEvent) => {
+  //   if (e.target !== elem) return;
+  //   const dx = (e.movementX ?? 0);
+  //   const dy = (e.movementY ?? 0);
 
-    // accumulate desired angular velocity from mouse deltas
-    vTheta += -scale(dx) * GAIN; // azimuth (left/right)
-    vPhi   += -scale(dy) * GAIN; // polar   (up/down)
+  //   // accumulate desired angular velocity from mouse deltas
+  //   vTheta += -scale(dx) * GAIN; // azimuth (left/right)
+  //   vPhi   += -scale(dy) * GAIN; // polar   (up/down)
 
-    startDampedRAF(); // use your existing RAF kicker
-  };
+  //   startDampedRAF(); // use your existing RAF kicker
+  // };
 
   // apply the velocity each frame, decay with inertia, clamp, and reposition camera
-  const applyOrbitStep = () => {
-    // 1) current offset in Y-up space
-    offset.copy(camera.position).sub(controls.target).applyQuaternion(quat);
-    spherical.setFromVector3(offset);
+  // const applyOrbitStep = () => {
+  //   // 1) current offset in Y-up space
+  //   offset.copy(camera.position).sub(controls.target).applyQuaternion(quat);
+  //   spherical.setFromVector3(offset);
 
-    // 2) integrate velocity
-    spherical.theta += vTheta;
-    spherical.phi   += vPhi;
+  //   // 2) integrate velocity
+  //   spherical.theta += vTheta;
+  //   spherical.phi   += vPhi;
 
-    // 3) clamp to OrbitControls-style limits
-    spherical.theta = Math.max(minAz, Math.min(maxAz, spherical.theta));
-    spherical.phi   = Math.max(minPh, Math.min(maxPh, spherical.phi));
+  //   // 3) clamp to OrbitControls-style limits
+  //   spherical.theta = Math.max(minAz, Math.min(maxAz, spherical.theta));
+  //   spherical.phi   = Math.max(minPh, Math.min(maxPh, spherical.phi));
 
-    // 4) write back position (preserve radius)
-    offset.setFromSpherical(spherical).applyQuaternion(quatInv);
-    camera.position.copy(controls.target).add(offset);
-    camera.lookAt(controls.target);
+  //   // 4) write back position (preserve radius)
+  //   offset.setFromSpherical(spherical).applyQuaternion(quatInv);
+  //   camera.position.copy(controls.target).add(offset);
+  //   camera.lookAt(controls.target);
 
-    // 5) decay velocity (inertia)
-    vTheta *= INERTIA;
-    vPhi   *= INERTIA;
+  //   // 5) decay velocity (inertia)
+  //   vTheta *= INERTIA;
+  //   vPhi   *= INERTIA;
 
-    // let OrbitControls dispatch 'change' listeners (your render loop listens to controls.update())
-    controls.dispatchEvent({ type: 'change' });
-  };
+  //   // let OrbitControls dispatch 'change' listeners (your render loop listens to controls.update())
+  //   controls.dispatchEvent({ type: 'change' });
+  // };
 
   // hook our step into your damped RAF loop
-  const _origUpdate = controls.update.bind(controls) as () => boolean;
-  controls.update = (): boolean => {
-    // first, apply our orbit step so camera is up-to-date
-    applyOrbitStep();
-    // then run the normal OrbitControls update (handles zoom limits, etc.)
-    return _origUpdate();
-  };
+  // const _origUpdate = controls.update.bind(controls) as () => boolean;
+  // controls.update = (): boolean => {
+  //   // first, apply our orbit step so camera is up-to-date
+  //   applyOrbitStep();
+  //   // then run the normal OrbitControls update (handles zoom limits, etc.)
+  //   return _origUpdate();
+  // };
 
-  elem.addEventListener('mousemove', onMouseMove);
+  // elem.addEventListener('mousemove', onMouseMove);
 
   // keep wheel zoom & pan working, avoid double-rotate on drag
-  controls.mouseButtons = {
-    LEFT: THREE.MOUSE.PAN,
-    MIDDLE: THREE.MOUSE.DOLLY,
-    RIGHT: THREE.MOUSE.PAN,
-  };
+  // controls.mouseButtons = {
+  //   LEFT: THREE.MOUSE.PAN,
+  //   MIDDLE: THREE.MOUSE.DOLLY,
+  //   RIGHT: THREE.MOUSE.PAN,
+  // };
 
-  // Request pointer lock when clicking the canvas
-  elem.addEventListener("click", () => {
-    if (document.pointerLockElement !== elem) {
-      elem.requestPointerLock({ unadjustedMovement: true });
+  // // Request pointer lock when clicking the canvas
+  // elem.addEventListener("click", () => {
+  //   if (document.pointerLockElement !== elem) {
+  //     elem.requestPointerLock({ unadjustedMovement: true });
+  //   }
+  // });
+
+  controls.minPolarAngle = 0.0001;
+controls.maxPolarAngle = Math.PI - 0.0001;
+controls.minAzimuthAngle = -Infinity;
+controls.maxAzimuthAngle =  Infinity;
+
+// ------------------ WASD: walk by camera heading on the globe ------------------
+const CENTER = new THREE.Vector3(0, 0, 0);
+const pressed = new Set<string>();
+let moving = false;
+let lastT = performance.now();
+
+const SURFACE_SPEED = 200; // world units/sec along the surface
+
+// scratch
+const n = new THREE.Vector3();
+const screenUp = new THREE.Vector3();
+const screenRight = new THREE.Vector3();
+const fwdT = new THREE.Vector3();
+const rightT = new THREE.Vector3();
+const axis = new THREE.Vector3();
+const q = new THREE.Quaternion();
+
+function onKeyDown(e: KeyboardEvent) {
+  const k = e.key.toLowerCase();
+  if ([" "].includes(k)) e.preventDefault();
+  pressed.add(k);
+  startMoveLoop();
+}
+function onKeyUp(e: KeyboardEvent) {
+  pressed.delete(e.key.toLowerCase());
+}
+
+function startMoveLoop() {
+  if (moving) return;
+  moving = true;
+  lastT = performance.now();
+
+  const step = () => {
+    if (!moving) return;
+    if (pressed.size === 0) { moving = false; return; }
+
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+
+    // local radial up at current spot
+    n.copy(camera.position).sub(CENTER).normalize();
+
+    // camera’s screen axes in world space
+    screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    screenRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+
+    // project them onto the tangent plane (remove vertical component along n)
+    fwdT.copy(screenUp).addScaledVector(n, -screenUp.dot(n)).normalize();
+    rightT.copy(screenRight).addScaledVector(n, -screenRight.dot(n)).normalize();
+
+    // if fwdT got tiny (rare, e.g. extreme roll), fall back to right vector
+    if (fwdT.lengthSq() < 1e-8) {
+      fwdT.copy(rightT);
+      rightT.crossVectors(fwdT, n).normalize();
     }
-  });
 
-  // ------------------ keyboard movement (WASD/Arrows on XY, Q/E on Z) ------------------
-  const pressed = new Set<string>();
-  let moving = false;
-  let lastT = performance.now();
-  const SPEED = 20; // world units/sec; adjust to taste
+    // combine keys into tangent direction
+    const dir = new THREE.Vector3();
+    if (pressed.has("w"))    dir.add(fwdT);
+    if (pressed.has("s"))  dir.sub(fwdT);
+    if (pressed.has("d")) dir.add(rightT);
+    if (pressed.has("a"))  dir.sub(rightT);
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    const k = e.key.toLowerCase();
-    pressed.add(k);
-    startMoveLoop();
-  };
-  const onKeyUp = (e: KeyboardEvent) => {
-    pressed.delete(e.key.toLowerCase());
-  };
+    // optional altitude: space up, shift down (purely radial)
+    const radial = (pressed.has(" ") ? +1 : 0) + (pressed.has("shift") ? -1 : 0);
 
-  function startMoveLoop() {
-    if (moving) return;
-    moving = true;
-    lastT = performance.now();
+    let didMove = false;
 
-    const step = () => {
-      if (!moving) return;
-      if (pressed.size === 0) { moving = false; return; }
+    // walk the surface by rotating around axis = n × dir
+    if (dir.lengthSq() > 1e-10) {
+      dir.normalize();
+      const R = camera.position.distanceTo(CENTER);
+      const angle = (SURFACE_SPEED / Math.max(1e-6, R)) * dt; // radians = arc/R
+      axis.crossVectors(n, dir).normalize();
+      q.setFromAxisAngle(axis, angle);
+      camera.position.sub(CENTER).applyQuaternion(q).add(CENTER);
+      didMove = true;
+    }
 
-      const now = performance.now();
-      const dt = Math.min(0.05, (now - lastT) / 1000);
-      lastT = now;
+    // altitude change (optional)
+    if (radial !== 0) {
+      const climb = (SURFACE_SPEED * 0.5) * dt * radial;
+      camera.position.add(n.clone().multiplyScalar(climb));
+      didMove = true;
+    }
 
-      // Forward relative to camera facing, clamped to XY (Z is up)
-      const fwd = new THREE.Vector3();
-      camera.getWorldDirection(fwd);
-      fwd.z = 0;
-      if (fwd.lengthSq() > 0) fwd.normalize();
-
-      // Right = 90° about +Z
-      const right = new THREE.Vector3(fwd.y, -fwd.x, 0).normalize();
-
-      const move = new THREE.Vector3();
-      if (pressed.has('w')) move.add(fwd);
-      if (pressed.has('s')) move.sub(fwd);
-      if (pressed.has('d')) move.add(right);
-      if (pressed.has('a')) move.sub(right);
-      if (pressed.has('q')) move.z += 1;
-      if (pressed.has('e')) move.z -= 1;
-      if (pressed.has(' ')) move.z += 1;
-      if (pressed.has('shift')) move.z -= 1;
-
-      if (move.lengthSq() > 0) {
-        move.normalize().multiplyScalar(SPEED * dt);
-        camera.position.add(move);
-        controls.target.add(move); // keep orbit pivot with the camera
-        startDampedRAF(); // keep your damped render loop alive while moving
-      }
-
-      requestAnimationFrame(step);
-    };
+    if (didMove) {
+      controls.target.copy(CENTER); // keep pivot at center
+      camera.lookAt(controls.target);
+      startDampedRAF();
+    }
 
     requestAnimationFrame(step);
-  }
+  };
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  // ---------------- end keyboard movement ----------------
+  requestAnimationFrame(step);
+}
+
+window.addEventListener("keydown", onKeyDown, { passive: false });
+window.addEventListener("keyup", onKeyUp);
+// ---------------- end WASD ----------------
+
 
   // Initial render (no mesh yet)
   renderOnce();
@@ -753,9 +798,9 @@ renderer.render(scene, camera);
     renderer.dispose();
     if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
   
-    elem.removeEventListener('mousemove', onMouseMove);
+    // elem.removeEventListener('mousemove', onMouseMove);
     // restore controls.update if you like (optional in most apps)
-    controls.update = _origUpdate;
+    // controls.update = _origUpdate;
   };
 }, []);
 
