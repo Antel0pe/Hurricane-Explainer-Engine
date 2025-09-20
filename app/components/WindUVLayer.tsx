@@ -79,9 +79,10 @@
         (texture) => {
           if (disposed) { texture.dispose(); return; }
 
-          texture.colorSpace = THREE.NoColorSpace;
-          texture.wrapS = THREE.ClampToEdgeWrapping;
-          texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.flipY = false; // <-- IMPORTANT: match the mesh
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;        // <-- longitudinal wrap
+    texture.wrapT = THREE.ClampToEdgeWrapping;  
           texture.minFilter = THREE.NearestFilter;
           texture.magFilter = THREE.NearestFilter;
           texture.generateMipmaps = false;

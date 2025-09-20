@@ -65,16 +65,6 @@ const mapUVtoLatLng = `
       float y =  radius * cos(phi);
       return vec3(x, y, z);
     }
-// vec3 latLonToXYZ(float latDeg, float lonDeg, float R) {
-//   float latR = radians(latDeg);
-//   float lonR = radians(lonDeg);
-//   float cl = cos(latR), sl = sin(latR);
-//   float x = -R * cl * cos(lonR);  // three-globe handedness
-//   float y =  R * sl;              // <-- keep Y-up
-//   float z =  R * cl * sin(lonR);
-//   return vec3(x, -y, z);           // <-- no (x,-z,y)
-// }
-
   // get lat/lon from uv
   vec2 getLatLon(vec2 uv){
     return vec2(mix(  90.0, -90.0, uv.y), mix(-180.0, 180.0, uv.x));
@@ -223,6 +213,7 @@ const UV_POINTS_VERT = `
   ${GET_POSITION_XY_SHARED_GLSL3}
   ${GET_UV_SUBSAMPLED_GLSL3}
   ${GET_OFFSET_FROM_ID_GLSL3}
+  ${mapUVtoLatLng}
   uniform sampler2D uTerrainTexture;
   uniform sampler2D uCurrentPosition;
   uniform vec2 uSimSize;
@@ -239,10 +230,20 @@ const UV_POINTS_VERT = `
   void main(){
     vec2 uvIdx = get_uv_from_vertex_id_subsampled(uGridW, uGridH, uStep);
     vec2 uv = texture(uCurrentPosition, uvIdx).rg;
-    vec2 xy = plane_xy_from_uv(uv, uAspect);
-    float z = get_position_z_glsl3(uTerrainTexture, uv, uExaggeration);
+    // vec2 xy = plane_xy_from_uv(uv, uAspect);
+    vec2 latlon = getLatLon(uv);
+    vec3 basePos = latLonToXYZ(latlon.x, latlon.y, globeRadius);
+    // 3) sample field height (0..uExaggeration mapped by your get_position_z_glsl3)
+    //    and lift along the outward normal
+    float hNorm = get_position_z_glsl3(uTerrainTexture, uv, 1.0); // returns t in [0,1] (because we pass 1.0)
+    float hWorld = uExaggeration * 50.0 * hNorm + uAboveTerrain;
+
+    vec3 normal = normalize(basePos);
+    vec3 worldPos = basePos + normal * hWorld;
+
+    // 4) position
     vId = gl_VertexID;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(xy.x, xy.y, z + uAboveTerrain + zOffset, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos + normal * zOffset, 1.0);
 
     float totalLife = texture(uCurrentPosition, uvIdx).b;
     float lifeExpended = texture(uCurrentPosition, uvIdx).a;
@@ -295,7 +296,7 @@ vec2 deltaUV_from_ms(vec2 uv_mps, float lat_deg, float dt) {
 
   // degrees → normalized texture UV (note: V increases downward ⇒ minus sign on dlat)
   // WHEN MOVING TO GLOBE RATHER THAN RECTANGLE, REMOVE COSPHI
-  float du = (dlon_deg / 360.0) * cosphi;
+  float du = (dlon_deg / 360.0);
   float dv = -dlat_deg / 180.0;
   return vec2(du, dv);
 }
@@ -1007,7 +1008,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
         zOffset={0.5}
         /> */}
 
-            {/* <WindUvLayer
+            <WindUvLayer
         key={`uv-850-${datehour}-${heightTexVersion3}`}
         url={`/api/uv/850/${datehour}`}
         renderer={rendererRef.current}
@@ -1023,7 +1024,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onReady={handleWindReady}
   onRemove={handleWindRemove}
         zOffset={1.0}
-        /> */}
+        />
 
 
       {/* <HeightMeshLayer
