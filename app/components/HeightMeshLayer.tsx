@@ -78,8 +78,10 @@ export default function HeightMeshLayer({
         if (disposed) { texture.dispose(); return; }
 
         // texture params
+        texture.flipY = false;       
         texture.colorSpace = THREE.NoColorSpace;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
+        // texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapS = THREE.RepeatWrapping;  
         texture.wrapT = THREE.ClampToEdgeWrapping;
         texture.minFilter = THREE.NearestFilter;
         texture.magFilter = THREE.NearestFilter;

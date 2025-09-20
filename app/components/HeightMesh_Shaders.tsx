@@ -99,7 +99,7 @@ const VERT = `
     float altitude = get_position_z(uTexture, uv, uExaggeration) + zOffset;
     // altitude = clamp(altitude, -5.0, 5.0);
     pos.z = position.z + altitude;
-    pos = latLonToXYZ(latlon.x, latlon.y, globeRadius + pos.z + 10.0);
+    pos = latLonToXYZ(latlon.x, latlon.y, globeRadius + pos.z * 10.0);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `;
@@ -159,7 +159,7 @@ const FRAG = `
     vec3 landRgb = texture2D(uLandTexture, vUv).rgb;
     float landWhiteLevel = max(max(landRgb.r, landRgb.g), landRgb.b);
     float isLand = step(0.5, 1.0 - landWhiteLevel);
-    color = mix(color, vec3(0.0), isLand * 1.0);
+    color = mix(color, vec3(0.0), isLand * 0.0);
 
     gl_FragColor = vec4(color, 0.5);
   }
@@ -1026,7 +1026,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
         /> */}
 
 
-      <HeightMeshLayer
+      {/* <HeightMeshLayer
   url={`/api/gph/250/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -1040,7 +1040,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={0}
   onTextureChange={handleGph250}
-/>
+/> */}
 
       {/* <HeightMeshLayer
   url={`/api/gph/500/${datehour}`}
@@ -1058,7 +1058,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onTextureChange={handleGph500}
 /> */}
 
-    {/* <HeightMeshLayer
+    <HeightMeshLayer
   url={`/api/gph/850/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -1072,7 +1072,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={1}
   onTextureChange={handleGph850}
-/> */}
+/>
 </>
 )}
     </div>;
