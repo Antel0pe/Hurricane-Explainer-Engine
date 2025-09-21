@@ -99,7 +99,7 @@
 
           const aspect = texW / texH;
           const dimsChanged = !uvDimsRef.current || uvDimsRef.current.w !== texW || uvDimsRef.current.h !== texH;
-          const UV_POINTS_STEP = 25;
+          const UV_POINTS_STEP = 10;
 
           const makeRT = (w: number, h: number) =>
             new THREE.WebGLRenderTarget(w, h, {
@@ -226,13 +226,13 @@
             mat.uniforms.uPointSize.value      = (1.5 * (window.devicePixelRatio || 1)) * 3.0;
             mat.uniforms.uGridW.value          = texW;
             mat.uniforms.uGridH.value          = texH;
-            mat.uniforms.uStep.value           = 25;
+            mat.uniforms.uStep.value           = 10;
             mat.uniforms.uAboveTerrain.value   = 0.01;
             mat.uniforms.zOffset.value   = zOffset;
 
             if (dimsChanged) {
-              const outW = Math.ceil(texW / 25);
-              const outH = Math.ceil(texH / 25);
+              const outW = Math.ceil(texW / 10);
+              const outH = Math.ceil(texH / 10);
               const count = outW * outH;
               geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
               uvDimsRef.current = { w: texW, h: texH };

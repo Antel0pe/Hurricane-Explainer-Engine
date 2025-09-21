@@ -365,6 +365,7 @@ void main() {
 
       // Step 2: sample at midpoint and advance full dt with midpoint slope
       vec2 wind2_ms = sampleWindUV(midPos) * WIND_GAIN;                  // m/s
+      // wind2_ms = vec2(0,0);
       float lat2_deg = latFromV(midPos.y);
       vec2 duv2 = deltaUV_from_ms(wind2_ms, lat2_deg, uDt);
 

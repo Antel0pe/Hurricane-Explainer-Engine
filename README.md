@@ -65,3 +65,5 @@ future ideas:
     - // WHEN MOVING TO GLOBE RATHER THAN RECTANGLE, REMOVE COSPHI
     - float du = (dlon_deg / 360.0) * cosphi;
 - color particles by temperature. this would help with telling what altitude particles are on
+- make shaders not components so moving to next hour animation is better
+- increase resolution of mesh, wind, etc
