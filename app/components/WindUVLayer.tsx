@@ -2,17 +2,7 @@
   "use client";
   import * as THREE from "three";
   import { useEffect, useRef } from "react";
-
-  type WindLayerAPI = {
-    simScene: THREE.Scene;
-    simCam: THREE.OrthographicCamera;
-    simMat: THREE.ShaderMaterial;
-    readRT: THREE.WebGLRenderTarget;
-    writeRT: THREE.WebGLRenderTarget;
-    ptsMat: THREE.ShaderMaterial;
-    outW: number;
-    outH: number;
-  };
+import { WindLayerAPI } from "./HeightMesh_Shaders";
 
 
   type Props = {
@@ -67,6 +57,10 @@
     const outHRef = useRef(0);
 
     const apiRef = useRef<WindLayerAPI | null>(null);
+
+    const trailPointsRef = useRef<THREE.Points | null>(null);
+const trailMatRef    = useRef<THREE.ShaderMaterial | null>(null);
+
 
     useEffect(() => {
       if (!renderer || !scene || !camera || !url) return;
@@ -206,6 +200,52 @@
             uvTexRef.current = texture;
             uvDimsRef.current = { w: texW, h: texH };
 
+            // --- TRAIL LAYER (green) ---
+// Reuse SAME vertex shader as moving points, but different fragment shader (green)
+// and its own uniforms (esp. uCurrentPosition bound to rtRead.texture)
+const trailMat = new THREE.ShaderMaterial({
+  vertexShader: UV_POINTS_VERT,         // same placement logic
+  fragmentShader: `
+    precision highp float;
+    out vec4 fragColor;
+    void main(){
+      vec2 d = gl_PointCoord - 0.5;
+      if(dot(d,d) > 0.25) discard;
+      fragColor = vec4(0.0, 1.0, 0.0, 0.65); // green
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.NormalBlending,
+  glslVersion: THREE.GLSL3,
+  side: THREE.DoubleSide,
+  uniforms: {
+    uTerrainTexture: { value: heightTex },            // same inputs so vertex has what it needs
+    uExaggeration:   { value: typeof exaggeration === "number" ? exaggeration : 0.5 },
+    uAspect:         { value: aspect },
+    // keep trail a tad smaller (independent size per material)
+    uPointSize:      { value: (1.5 * (window.devicePixelRatio || 1)) * 2.0 },
+    uGridW:          { value: texW },
+    uGridH:          { value: texH },
+    uStep:           { value: 10 },
+    uAboveTerrain:   { value: 0.1 },
+    uCurrentPosition:{ value: rtRead.texture },       // <-- IMPORTANT: bind to current readRT
+    uSimSize:        { value: new THREE.Vector2(outW, outH) },
+    uPressure:       { value: pressureLevel },
+    zOffset:         { value: zOffset ?? 0.0 },
+  }
+});
+
+// reuse the SAME geometry so it draws at the same UV sampling
+const trailPts = new THREE.Points(geo, trailMat);
+trailPts.frustumCulled = false;
+scene.add(trailPts);
+
+// stash refs
+trailMatRef.current = trailMat;
+trailPointsRef.current = trailPts;
+
+
                 apiRef.current = {
         simScene: simSceneRef.current!,      // your created sim scene
         simCam:   simCameraRef.current!,     // your ortho cam
@@ -213,7 +253,8 @@
         readRT:   readPositionRTRef.current!,
         writeRT:  writePositionRTRef.current!,
         ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
-        outW, outH
+        outW, outH,
+        trailMat: trailMatRef.current!,
       };
       onReady?.(apiRef.current);
           } else {

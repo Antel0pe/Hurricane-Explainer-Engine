@@ -387,7 +387,21 @@ void main() {
   }
   `
 
-type WindLayerAPI = {
+  // Add this next to your other shader strings:
+const TRAIL_POINTS_FRAG = `
+  precision highp float;
+  out vec4 fragColor;
+  void main(){
+    // round sprite mask
+    vec2 d = gl_PointCoord - 0.5;
+    if(dot(d,d) > 0.25) discard;
+    // solid green dot
+    fragColor = vec4(0.0, 1.0, 0.0, 0.65);
+  }
+`;
+
+
+export type WindLayerAPI = {
   simScene: THREE.Scene;
   simCam: THREE.OrthographicCamera;
   simMat: THREE.ShaderMaterial;
@@ -396,6 +410,7 @@ type WindLayerAPI = {
   ptsMat: THREE.ShaderMaterial;
   outW: number;
   outH: number;
+  trailMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -903,6 +918,10 @@ window.addEventListener("keyup", onKeyUp);
 
     // points sample the latest
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+
+    // trails sample the latest positions
+L.trailMat.uniforms.uCurrentPosition.value = L.readRT.texture;  
+
   }
 
   // restore viewport/scissor exactly
