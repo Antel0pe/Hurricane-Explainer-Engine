@@ -227,9 +227,21 @@ const UV_POINTS_VERT = `
   uniform float zOffset;
   flat out int vId;
   out float particleOpacity;
+
+  // Put in a shared GLSL3 block
+vec2 simUV_from_vertex_id(ivec2 simSize) {
+  int outW = simSize.x;
+  int outH = simSize.y;
+  int ii = gl_VertexID % outW;
+  int jj = gl_VertexID / outW;
+  return vec2( (float(ii) + 0.5) / float(outW),
+               (float(jj) + 0.5) / float(outH) );
+}
+
   void main(){
-    vec2 uvIdx = get_uv_from_vertex_id_subsampled(uGridW, uGridH, uStep);
+    vec2 uvIdx = simUV_from_vertex_id(ivec2(int(uSimSize.x), int(uSimSize.y)));
     vec2 uv = texture(uCurrentPosition, uvIdx).rg;
+    uv = vec2(uv.x, 1.0 - uv.y);
     // vec2 xy = plane_xy_from_uv(uv, uAspect);
     vec2 latlon = getLatLon(uv);
     vec3 basePos = latLonToXYZ(latlon.x, latlon.y, globeRadius);
@@ -400,6 +412,151 @@ const TRAIL_POINTS_FRAG = `
   }
 `;
 
+// --- Accumulator (UV-space) point-splat pass (GLSL3) ---
+// Maps each particle's UV -> clipspace and draws a small circular splat.
+// Uses additive blending so repeated hits brighten the texel.
+export const ACCUM_POINTS_VERT = `
+  ${GET_UV_SUBSAMPLED_GLSL3}
+  precision highp float;
+
+  uniform sampler2D uCurrentPosition;
+  uniform int uGridW;
+  uniform int uGridH;
+  uniform int uStep;
+  uniform vec2 uSimSize;
+  uniform float uPointSize;
+
+  out vec2 vUv; // unused here but handy if you ever want it
+
+  // Put in a shared GLSL3 block
+vec2 simUV_from_vertex_id(ivec2 simSize) {
+  int outW = simSize.x;
+  int outH = simSize.y;
+  int ii = gl_VertexID % outW;
+  int jj = gl_VertexID / outW;
+  return vec2( (float(ii) + 0.5) / float(outW),
+               (float(jj) + 0.5) / float(outH) );
+}
+
+
+  void main(){
+    // Which particle are we drawing?
+    vec2 uvIdx = simUV_from_vertex_id(ivec2(int(uSimSize.x), int(uSimSize.y)));
+
+    // Current particle position in UV space (0..1)
+    vec2 uv = texture(uCurrentPosition, uvIdx).rg;
+
+    // UV (0..1) -> clipspace (-1..+1)
+    vec2 clip = uv * 2.0 - 1.0;
+    gl_Position = vec4(clip, 0.0, 1.0);
+    gl_PointSize = 1.0; // in pixels of the accumulation RT
+    vUv = uv;
+  }
+`;
+
+export const ACCUM_POINTS_FRAG = `
+  precision highp float;
+  out vec4 fragColor;
+  void main(){
+    // round sprite with a soft edge -> smoother trails
+    vec2 d = gl_PointCoord - 0.5;
+    float r2 = dot(d,d);
+    if (r2 > 0.25) discard;                 // hard circle radius 0.5
+    // Gaussian-ish falloff so dense areas bloom more nicely
+    float m = exp(-r2 * 24.0);              // tweak 24.0 for footprint
+    fragColor = vec4(0.0, m, 0.0, m);           // RGB+alpha, but color drives accumulation
+  }
+`;
+
+// --- On-screen preview quad (bottom-left mini HUD) ---
+export const PREVIEW_VERT = `
+  out vec2 vUv;
+  void main(){
+    vec2 pos = vec2( (gl_VertexID == 1) ? 3.0 : -1.0,
+                     (gl_VertexID == 2) ? 3.0 : -1.0 );
+    vUv = 0.5 * (pos + 1.0);
+    gl_Position = vec4(pos, 0.0, 1.0);
+  }
+`;
+
+export const PREVIEW_FRAG = `
+  precision highp float;
+  in vec2 vUv;
+  uniform sampler2D uAccum;
+  uniform float uGain;   // visualization gain
+  out vec4 fragColor;
+  void main(){
+    vec3 c = texture(uAccum, vUv).rgb;
+    // simple tone-map so it "pops" as counts add up
+    c = 1.0 - exp(-uGain * c);
+    fragColor = vec4(c, 1.0);
+  }
+`;
+
+// === Trails overlay on the globe ===
+export const TRAIL_OVERLAY_VERT = `
+precision highp float;
+varying vec2 vSampleUV;    // bottom-origin, for sampling uTrail
+${mapUVtoLatLng}
+
+uniform float uLift;
+
+void main() {
+  vSampleUV = uv;                              // keep bottom-origin for texture lookup
+  vec2 uvTop = vec2(uv.x, 1.0 - uv.y);         // flip only for lat/lon placement
+
+  vec2 latlon = getLatLon(uvTop);              // mapper expects top-origin
+  vec3 pos = latLonToXYZ(latlon.x, latlon.y, globeRadius + uLift);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+
+`;
+
+export const TRAIL_OVERLAY_FRAG = `
+precision highp float;
+varying vec2 vSampleUV;        // <- bottom-origin
+uniform sampler2D uTrail;
+uniform float uGain;
+uniform vec3  uTint;
+uniform float uOpacity;
+out vec4 fragColor;
+
+void main() {
+  vec3 ink = texture(uTrail, vSampleUV).rgb;   // sample with bottom-origin
+  ink = 1.0 - exp(-uGain * ink);
+  vec3 col = uTint * ink;
+  float a  = clamp(max(max(ink.r, ink.g), ink.b) * uOpacity, 0.0, 1.0);
+  fragColor = vec4(col, a);
+}
+
+`;
+
+export const DECAY_VERT = `
+  precision highp float;
+  out vec2 vUv;
+  void main(){
+    // full-screen triangle via gl_VertexID
+    vec2 pos = vec2( (gl_VertexID == 1) ? 3.0 : -1.0,
+                     (gl_VertexID == 2) ? 3.0 : -1.0 );
+    vUv = 0.5 * (pos + 1.0);
+    gl_Position = vec4(pos, 0.0, 1.0);
+  }
+`;
+
+export const DECAY_FRAG = `
+  precision highp float;
+  in vec2 vUv;
+  out vec4 fragColor;
+
+  uniform sampler2D uSrc;   // previous accumulation texture (read-only)
+  uniform float uDecay;     // multiplicative decay per frame, e.g. 0.99
+
+  void main(){
+    vec4 c = texture(uSrc, vUv);     // read current trail intensity
+    fragColor = c * uDecay;          // write decayed intensity
+  }
+`;
+
 
 export type WindLayerAPI = {
   simScene: THREE.Scene;
@@ -411,6 +568,23 @@ export type WindLayerAPI = {
   outW: number;
   outH: number;
   trailMat: THREE.ShaderMaterial;
+    // new for trails-accumulator
+  accumRT: THREE.WebGLRenderTarget;
+  accumScene: THREE.Scene;
+  accumCam: THREE.OrthographicCamera;
+  accumMat: THREE.ShaderMaterial;
+
+  // tiny on-screen preview (render to default framebuffer in a small viewport)
+  previewScene: THREE.Scene;
+  previewCam: THREE.OrthographicCamera;
+  previewMat: THREE.ShaderMaterial;
+    // NEW: decay ping-pong + overlay hooks
+  accumRTB: THREE.WebGLRenderTarget;          // B buffer for ping-pong
+  decayScene: THREE.Scene;
+  decayCam: THREE.OrthographicCamera;
+  decayMat: THREE.ShaderMaterial;
+
+  overlayMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -920,7 +1094,53 @@ window.addEventListener("keyup", onKeyUp);
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
     // trails sample the latest positions
-L.trailMat.uniforms.uCurrentPosition.value = L.readRT.texture;  
+// L.trailMat.uniforms.uCurrentPosition.value = L.readRT.texture;  
+
+// // --- DECAY: accumRT (A) -> accumRTB (B), then swap so A is current ---
+// {
+//   const prevAC = renderer.autoClear;
+//   renderer.autoClear = false; // don't clear targets implicitly
+
+//   // read from A, write to B
+//   // (if you stored decayMat/Scene on L, use those; otherwise capture from closure)
+//   // here I assume you saved them on the API as L.decayMat/L.decayScene/L.decayCam:
+//   L.decayMat.uniforms.uSrc.value = L.accumRT.texture;
+
+//   renderer.setRenderTarget(L.accumRTB);
+//   renderer.setViewport(0, 0, L.accumRTB.width, L.accumRTB.height);
+//   renderer.setScissorTest(false);
+//   // no clear: we overwrite every pixel
+//   renderer.render(L.decayScene, L.decayCam);
+//   renderer.setRenderTarget(null);
+
+//   renderer.autoClear = prevAC;
+
+//   // swap A<->B
+//   const tmp = L.accumRT;
+//   L.accumRT = L.accumRTB;
+//   L.accumRTB = tmp;
+
+//   // ensure everything that *reads* the trails sees the latest A
+// L.decayMat.uniforms.uSrc.value   = L.accumRT.texture; // next frame reads from new A
+// L.previewMat.uniforms.uAccum.value = L.accumRT.texture;
+// L.overlayMat.uniforms.uTrail.value = L.accumRT.texture;
+// }
+
+// --- SPLAT: add this frame's particle hits into the (decayed) A ---
+{
+  const prevAC = renderer.autoClear;
+  renderer.autoClear = false;
+
+  renderer.setRenderTarget(L.accumRT);
+  renderer.setViewport(0, 0, L.accumRT.width, L.accumRT.height);
+  renderer.setScissorTest(false);
+
+  L.accumMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+  renderer.render(L.accumScene, L.accumCam); // additive points
+  renderer.setRenderTarget(null);
+
+  renderer.autoClear = prevAC;
+}
 
   }
 
@@ -931,7 +1151,28 @@ L.trailMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
   controls.update();
   renderer.render(scene, camera);
-  requestAnimationFrame(loop);
+// --- (2) Tiny on-screen preview of the accumulation texture (bottom-left) ---
+for (const L of windLayersSetRef.current) {
+  // choose a small box; e.g., 256×(256*H/W) so aspect is roughly correct
+  const boxW = 256;
+  const boxH = Math.max(64, Math.floor(256 * (L.accumRT.height / L.accumRT.width)));
+
+  renderer.setViewport(12, 12, boxW, boxH);           // bottom-left inset
+  renderer.setScissor(12, 12, boxW, boxH);
+  renderer.setScissorTest(true);
+
+  // (optional) tweak gain live if you want:
+  L.previewMat.uniforms.uGain.value = 6.0;
+
+  renderer.render(L.previewScene, L.previewCam);
+}
+
+// restore to full window defaults after HUD
+renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
+renderer.setScissorTest(prevScissorTest);
+
+requestAnimationFrame(loop);
   };
 
       requestAnimationFrame(loop);
@@ -946,7 +1187,6 @@ L.trailMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
   const handleLandTex = useCallback((tex: THREE.Texture) => {
   landTexRef.current = tex;
-  console.log('land tex')
   // optionally bump a version if you *need* to react elsewhere
   // setLandTexVersion(v => v + 1);
 }, []);
