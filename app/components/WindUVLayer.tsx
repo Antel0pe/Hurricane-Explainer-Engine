@@ -2,7 +2,7 @@
   "use client";
   import * as THREE from "three";
   import { useEffect, useRef } from "react";
-import { ACCUM_POINTS_FRAG, ACCUM_POINTS_VERT, DECAY_FRAG, DECAY_VERT, PREVIEW_FRAG, PREVIEW_VERT, TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, WindLayerAPI } from "./HeightMesh_Shaders";
+import { WindLayerAPI } from "./HeightMesh_Shaders";
 
 
   type Props = {
@@ -245,200 +245,18 @@ scene.add(trailPts);
 trailMatRef.current = trailMat;
 trailPointsRef.current = trailPts;
 
-// --------- (A) Accumulation RT (UV-space) ---------
-const accumW = texW;                 // you can downscale if you want (e.g., texW/2)
-const accumH = texH;
 
-const makeAccumRT = (w:number, h:number) => {
-  const rt = new THREE.WebGLRenderTarget(w, h, {
-    type: THREE.FloatType,
-    format: THREE.RGBAFormat,
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: false,
-    stencilBuffer: false
-  });
-  // IMPORTANT: identical settings on both A and B
-  rt.texture.generateMipmaps = false;
-  rt.texture.wrapS = THREE.RepeatWrapping;       // longitudes
-  rt.texture.wrapT = THREE.ClampToEdgeWrapping;  // no pole bleed
-  rt.texture.flipY = false;                      // keep UV space consistent
-  rt.texture.colorSpace = THREE.NoColorSpace;    // linear data
-  rt.texture.needsUpdate = true;
-  return rt;
-};
-
-const accumRT = makeAccumRT(accumW, accumH);
-// clear to black once (empty)
-{
-  const cc = renderer.getClearColor(new THREE.Color()).clone();
-  const ca = renderer.getClearAlpha();
-  renderer.setRenderTarget(accumRT);
-  renderer.setClearColor(0x000000, 0);
-  renderer.clear(true, false, false);
-  renderer.setRenderTarget(null);
-  renderer.setClearColor(cc, ca);
-}
-
-// A tiny scene that draws *points in UV clipspace* into accumRT
-const accumScene = new THREE.Scene();
-const accumCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const accumGeo   = new THREE.BufferGeometry();
-accumGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(outW * outH * 3), 3));
-
-const accumMat = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: ACCUM_POINTS_VERT,
-  fragmentShader: ACCUM_POINTS_FRAG,
-  uniforms: {
-    uCurrentPosition: { value: readPositionRTRef.current!.texture },
-    uGridW:           { value: texW },
-    uGridH:           { value: texH },
-    uStep:            { value: UV_POINTS_STEP },
-    uSimSize:         { value: new THREE.Vector2(outW, outH) },
-    uPointSize:       { value: 2.0 } // tune footprint in UV RT pixels
-  },
-  transparent: true,
-  depthTest: false,
-  depthWrite: false,
-  blending: THREE.AdditiveBlending   // <-- key for accumulation
-});
-const accumPts = new THREE.Points(accumGeo, accumMat);
-accumPts.frustumCulled = false;
-accumScene.add(accumPts);
-
-// --------- (B) Small on-screen preview (bottom-left) ---------
-// Standalone scene+cam that draws a full-screen triangle; we’ll use a tiny viewport
-const previewScene = new THREE.Scene();
-const previewCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const previewMat   = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: PREVIEW_VERT,
-  fragmentShader: PREVIEW_FRAG,
-  uniforms: {
-    uAccum: { value: accumRT.texture },
-    uGain:  { value: 6.0 } // visualization gain
-  },
-  depthTest: false,
-  depthWrite: false,
-  transparent: false
-});
-// const previewMesh = new THREE.Mesh(new THREE.BufferGeometry(), previewMat);
-const tri = new THREE.BufferGeometry();
-const verts = new Float32Array([
-  -1, -1, 0,
-   3, -1, 0,
-  -1,  3, 0
-]);
-tri.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-const previewMesh = new THREE.Mesh(tri, previewMat);
-previewScene.add(previewMesh);
-
-// --- (C) Globe overlay that shows the accumulation texture ---
-accumRT.texture.wrapS = THREE.RepeatWrapping;      // longitudes wrap
-accumRT.texture.wrapT = THREE.ClampToEdgeWrapping; // avoid pole bleed
-
-const overlayGeo = new THREE.PlaneGeometry(1, 1, 256, 128);
-// we only need UVs; positions are ignored because vertex shader places by lat/lon
-
-const overlayMat = new THREE.ShaderMaterial({
-  vertexShader: TRAIL_OVERLAY_VERT,
-  fragmentShader: TRAIL_OVERLAY_FRAG,
-  transparent: true,
-  depthTest: true,
-  depthWrite: false,                 // draw over globe nicely
-  blending: THREE.AdditiveBlending,  // trails pop additively
-  uniforms: {
-    uTrail:   { value: accumRT.texture },
-    uGain:    { value: 6.0 },        // try 4–12
-    uTint:    { value:new THREE.Color(0x00ff88) },
-    uOpacity: { value: 0.85 },
-    uLift:    { value: 0.25 }        // ~0.25 world units above globeRadius
-  },
-  glslVersion: THREE.GLSL3,
-  side: THREE.DoubleSide
-});
-const overlayMesh = new THREE.Mesh(overlayGeo, overlayMat);
-overlayMesh.frustumCulled = false;
-scene.add(overlayMesh);
-
-// ---- (D) Decay ping-pong target (accumRTB) ----
-const accumRTB = makeAccumRT(accumW, accumH);
-
-accumRTB.texture.wrapS = THREE.RepeatWrapping;      // longitude wraps
-accumRTB.texture.wrapT = THREE.ClampToEdgeWrapping; // avoid pole bleed
-accumRTB.texture.generateMipmaps = false;
-accumRTB.texture.colorSpace = THREE.NoColorSpace;   // keep it linear
-accumRTB.texture.needsUpdate = true;
-// init black once
-{
-  const cc = renderer.getClearColor(new THREE.Color()).clone();
-  const ca = renderer.getClearAlpha();
-  renderer.setRenderTarget(accumRTB);
-  renderer.setClearColor(0x000000, 0);
-  renderer.clear(true, false, false);
-  renderer.setRenderTarget(null);
-  renderer.setClearColor(cc, ca);
-}
-
-// ---- (E) Decay scene: full-screen triangle A->B ----
-const decayScene = new THREE.Scene();
-const decayCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const decayMat   = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: DECAY_VERT,
-  fragmentShader: DECAY_FRAG,
-  uniforms: {
-    uSrc:   { value: accumRT.texture },  // start reading from A
-    uDecay: { value: 1.0 }              // trail length knob (0.98–0.9995)
-  },
-  depthTest: false,
-  depthWrite: false,
-  transparent: false,
-  blending: THREE.NoBlending, 
-});
-// Fullscreen triangle (same pattern as preview)
-const decayTri = new THREE.BufferGeometry();
-decayTri.setAttribute(
-  'position',
-  new THREE.BufferAttribute(new Float32Array([
-    -1, -1, 0,
-     3, -1, 0,
-    -1,  3, 0
-  ]), 3)
-);
-const decayMesh = new THREE.Mesh(decayTri, decayMat);
-decayScene.add(decayMesh);
-
-
-
-
-// --- stash new handles on API ---
-apiRef.current = {
-  simScene: simSceneRef.current!,
-  simCam:   simCameraRef.current!,
-  simMat:   simMatRef.current!,
-  readRT:   readPositionRTRef.current!,
-  writeRT:  writePositionRTRef.current!,
-  ptsMat:   uvMatRef.current!,
-  outW, outH,
-  trailMat: trailMatRef.current!,  // you already had this
-  accumRT,
-  accumScene,
-  accumCam,
-  accumMat,
-  previewScene,
-  previewCam,
-  previewMat,
-    accumRTB,               // the B buffer
-  decayScene,
-  decayCam,
-  decayMat,
-
-  overlayMat,   
-};
-onReady?.(apiRef.current);
-
+                apiRef.current = {
+        simScene: simSceneRef.current!,      // your created sim scene
+        simCam:   simCameraRef.current!,     // your ortho cam
+        simMat:   simMatRef.current!,        // your sim material
+        readRT:   readPositionRTRef.current!,
+        writeRT:  writePositionRTRef.current!,
+        ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
+        outW, outH,
+        trailMat: trailMatRef.current!,
+      };
+      onReady?.(apiRef.current);
           } else {
             // update existing
             const mat = uvMatRef.current!;
