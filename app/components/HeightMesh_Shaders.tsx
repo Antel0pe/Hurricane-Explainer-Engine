@@ -442,43 +442,18 @@ void main() {
 // in the positions texture (writeRT). If any stored particle position is near
 // this vUv, draw a green dot (like your point sprite).
 export const TRAIL_OVERLAY_FRAG = `
-  precision highp float;
-  varying vec2 vUv;
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D uTrailTex;
+uniform vec3  uColor;
+uniform float uGain;
+uniform float uThreshold;
 
-  uniform sampler2D uPositionsTex; // <-- bind to writeRT.texture (previous positions)
-  uniform vec2  uSimSize;          // (outW, outH) of the sim RT
-  uniform float uRadiusUV;         // dot radius in UV units
-  uniform float uOpacity;          // 0..1, match your 0.65
-
-  // fetch particle pos at integer index (i,j)
-  vec2 fetchPos(ivec2 ij){
-    ij = clamp(ij, ivec2(0), ivec2(int(uSimSize.x)-1, int(uSimSize.y)-1));
-    vec2 st = (vec2(ij) + 0.5) / uSimSize;
-    return texture2D(uPositionsTex, st).rg;
-  }
-
-  void main(){
-    // find nearest index cell to this fragment
-    vec2 idxF = vUv * uSimSize;
-    ivec2 ij0 = ivec2(floor(idxF));
-
-    // search a tiny 3x3 neighborhood for a nearby particle
-    float minD = 1e9;
-    for (int dj = -1; dj <= 1; ++dj){
-      for (int di = -1; di <= 1; ++di){
-        ivec2 ij = ij0 + ivec2(di, dj);
-        vec2 p   = fetchPos(ij);
-        // positions texture stores (u,v) directly in RG
-        float d = distance(p, vUv);
-        minD = min(minD, d);
-      }
-    }
-
-    // smooth dot edge like your round point sprite
-    float a = smoothstep(uRadiusUV, 0.0, minD);
-    if (a <= 0.0) discard;
-
-    gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+void main(){
+  float v = texture2D(uTrailTex, vUv).r * uGain;
+  float a = smoothstep(uThreshold, uThreshold*1.5, v);
+  if (a<=0.0) discard;
+  gl_FragColor = vec4(uColor, a);
   }
 `;
 
@@ -494,6 +469,22 @@ export type WindLayerAPI = {
   outW: number;
   outH: number;
   trailMat: THREE.ShaderMaterial;
+
+    // NEW: trail accumulator
+  trailReadRT: THREE.WebGLRenderTarget;
+  trailWriteRT: THREE.WebGLRenderTarget;
+  trailW: number;
+  trailH: number;
+  trailOrthoCam: THREE.OrthographicCamera;
+
+  // passes
+  trailDecayScene: THREE.Scene;
+  trailDecayMat: THREE.ShaderMaterial;
+  trailStampScene: THREE.Scene;
+  trailStampMat: THREE.ShaderMaterial;
+
+  // overlay that samples the trail
+  trailOverlayMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -1005,7 +996,29 @@ window.addEventListener("keyup", onKeyUp);
     // trails sample the latest positions
 // L.trailMat.uniforms.uCurrentPosition.value = L.writeRT.texture;  
 
-(L as any).trailOverlayMat.uniforms.uPositionsTex.value = L.writeRT.texture;
+// (L as any).trailOverlayMat.uniforms.uPositionsTex.value = L.writeRT.texture;
+
+// 1) DECAY: trailWrite = trailRead * decay
+L.trailDecayMat.uniforms.uTrailPrev.value = L.trailReadRT.texture;
+renderer.setRenderTarget(L.trailWriteRT);
+renderer.setViewport(0, 0, L.trailW, L.trailH);
+renderer.setScissorTest(false);
+renderer.clear(); // optional
+renderer.render(L.trailDecayScene, L.trailOrthoCam);
+
+// 2) STAMP: add current particle positions into trailWrite
+L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture; // latest positions
+renderer.setRenderTarget(L.trailWriteRT);
+// // additive blending is on the material
+renderer.render(L.trailStampScene, L.trailOrthoCam);
+
+// // 3) SWAP trail read/write
+{ const t = L.trailReadRT; L.trailReadRT = L.trailWriteRT; L.trailWriteRT = t; }
+
+// 4) Make overlay sample the newest trail
+L.trailOverlayMat.uniforms.uTrailTex.value = L.trailReadRT.texture;
+
+renderer.setRenderTarget(null);
   }
 
   // restore viewport/scissor exactly

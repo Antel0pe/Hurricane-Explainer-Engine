@@ -61,6 +61,15 @@ import { TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, VERT, WindLayerAPI } from "./He
     const trailPointsRef = useRef<THREE.Points | null>(null);
 const trailMatRef    = useRef<THREE.ShaderMaterial | null>(null);
 
+const trailReadRTRef  = useRef<THREE.WebGLRenderTarget|null>(null);
+const trailWriteRTRef = useRef<THREE.WebGLRenderTarget|null>(null);
+const trailOrthoCamRef   = useRef<THREE.OrthographicCamera|null>(null);
+const trailDecaySceneRef = useRef<THREE.Scene|null>(null);
+const trailDecayMatRef   = useRef<THREE.ShaderMaterial|null>(null);
+const trailStampSceneRef = useRef<THREE.Scene|null>(null);
+const trailStampMatRef   = useRef<THREE.ShaderMaterial|null>(null);
+
+
 
     useEffect(() => {
       if (!renderer || !scene || !camera || !url) return;
@@ -245,65 +254,130 @@ trailPts.frustumCulled = false;
 trailMatRef.current = trailMat;
 trailPointsRef.current = trailPts;
 
+const makeTrailRT = (w:number,h:number) =>
+  new THREE.WebGLRenderTarget(w, h, {
+    type: THREE.FloatType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+    depthBuffer: false,
+    stencilBuffer: false
+  });
+
+const trailW = texW; // or Math.floor(texW/2)
+const trailH = texH; // or Math.floor(texH/2)
+
+trailReadRTRef.current  = makeTrailRT(trailW, trailH);
+trailWriteRTRef.current = makeTrailRT(trailW, trailH);
+
+// clear to black once
+renderer.setRenderTarget(trailReadRTRef.current);
+renderer.clearColor();
+renderer.clear(true,false,false);
+renderer.setRenderTarget(null);
+
 // === TRAIL OVERLAY PLANE (covers full UV extent, sits on globe) ===
 // was: new THREE.PlaneGeometry(aspect, 1, 1, 1)
 const trailOverlayGeo = new THREE.PlaneGeometry(aspect, 1, 256, 128);
 const trailOverlayMat = new THREE.ShaderMaterial({
   vertexShader: TRAIL_OVERLAY_VERT,       // your working globe-mapped vertex
-  fragmentShader: `
-    precision highp float;
-    varying vec2 vUv;
-    uniform sampler2D uPositionsTex;
-    uniform vec2  uSimSize;
-    uniform float uRadiusUV;
-    uniform float uOpacity;
-    uniform vec3  uColor;
-
-    void main() {
-      // nearest index cell (previous frame)
-      vec2 idx = floor(vUv * uSimSize) + 0.5;
-      vec2 st  = idx / uSimSize;
-      vec2 p   = texture2D(uPositionsTex, st).rg;
-
-      // wrap-aware distance in U so seam at 0/1 doesn't drop dots
-      float du = abs(p.x - vUv.x);
-      du = min(du, 1.0 - du);
-      float dv = p.y - vUv.y;
-      float d  = sqrt(du*du + dv*dv);
-
-      float a = smoothstep(uRadiusUV, 0.0, d);
-      if (a <= 0.0) discard;
-
-      gl_FragColor = vec4(uColor, a * uOpacity);
-    }
-  `,
+  fragmentShader: TRAIL_OVERLAY_FRAG,
   transparent: true,
-  depthTest: false,     // draw over everything
+  depthTest: true,     // draw over everything
   depthWrite: false,
   blending: THREE.NormalBlending, // or AdditiveBlending if you want it to pop more
   side: THREE.DoubleSide,
   // IMPORTANT: leave GLSL1 (default). The shader uses texture2D/varying.
   uniforms: {
-    // ---- vertex uniforms (required by TRAIL_OVERLAY_VERT)
-    uTerrainTexture: { value: heightTex },               // same height map as the mesh/points
-    uExaggeration:   { value: typeof exaggeration === 'number' ? exaggeration : 0.5 },
-    uPressure:       { value: pressureLevel },           // get_position_z() uses this!
-    zOffset:         { value: zOffset ?? 0.0 },
-
-    // ---- fragment uniforms (trail look)
-    uPositionsTex: { value: writePositionRTRef.current!.texture },   // previous frame
-    uSimSize:      { value: new THREE.Vector2(outW, outH) },
-    uRadiusUV:     { value: 0.1 / Math.max(outW, outH) },           // 0.25..0.6 is a good range
-    uOpacity:      { value: 1.0 },
-    uColor:        { value: new THREE.Color(0x00ff00) },             // bright green
+  uTrailTex:  { value: trailReadRTRef.current!.texture },
+  uColor:     { value: new THREE.Color(0x00ff00) },
+  uGain:      { value: 1.0 },
+  uThreshold: { value: 0.02 } // tweak
   }
 });
 
 const trailOverlayMesh = new THREE.Mesh(trailOverlayGeo, trailOverlayMat);
-trailOverlayMesh.frustumCulled = false;
-trailOverlayMesh.renderOrder = 9999;  // ensure it draws last
-trailOverlayMat.toneMapped = false;   // with ACES renderer, avoid tonemapping the UI overlay
+// trailOverlayMesh.frustumCulled = false;
+// trailOverlayMesh.renderOrder = 9999;  // ensure it draws last
+// trailOverlayMat.toneMapped = false;   // with ACES renderer, avoid tonemapping the UI overlay
 scene.add(trailOverlayMesh);
+
+
+const decayVS = `
+  precision highp float;
+  varying vec2 vUv;
+  void main(){
+    vUv = uv;
+    gl_Position = vec4(position.xy,0.0,1.0);
+  }`;
+const decayFS = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform sampler2D uTrailPrev;
+  uniform float uDecay;        // 0.0 = 1-frame trails, 0.94..0.99 = long trails
+  void main(){
+    vec3 prev = texture2D(uTrailPrev, vUv).rgb;
+    gl_FragColor = vec4(prev * uDecay, 1.0);
+  }`;
+
+trailOrthoCamRef.current = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+trailDecayMatRef.current = new THREE.ShaderMaterial({
+  vertexShader: decayVS,
+  fragmentShader: decayFS,
+  uniforms: {
+    uTrailPrev: { value: trailReadRTRef.current!.texture },
+    uDecay:     { value: 0.0 } // start with “1-frame trail” proof
+  },
+  depthTest:false, depthWrite:false, blending:THREE.NoBlending, transparent:false, toneMapped:false
+});
+const decayQuad = new THREE.Mesh(new THREE.PlaneGeometry(2,2), trailDecayMatRef.current);
+trailDecaySceneRef.current = new THREE.Scene();
+trailDecaySceneRef.current.add(decayQuad);
+const stampVS = `
+precision highp float;
+uniform sampler2D uCurrentPosition; // RG = (u,v)
+uniform ivec2    uSimSize;          // (outW,outH)
+uniform float    uPointSize;        // px in trail RT
+void main(){
+  int outW = uSimSize.x;
+  int id   = gl_VertexID;
+  int i    = id % outW;
+  int j    = id / outW;
+  vec2 st  = (vec2(i,j)+0.5)/vec2(uSimSize);
+  vec2 uv  = texture(uCurrentPosition, st).rg;
+  vec2 clip= uv*2.0-1.0;
+  gl_Position = vec4(clip, 0.0, 1.0);
+  gl_PointSize = uPointSize;
+}`;
+const stampFS = `
+precision highp float;
+out vec4 fragColor;
+void main(){
+  vec2 d = gl_PointCoord - 0.5;
+  float r2 = dot(d,d);
+  if (r2>0.25) discard;
+  float a = smoothstep(0.25, 0.0, r2);
+  fragColor = vec4(1.0,1.0,1.0,a); // accumulate intensity; color later on overlay
+}`;
+
+trailStampMatRef.current = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  vertexShader: stampVS,
+  fragmentShader: stampFS,
+  uniforms:{
+    uCurrentPosition:{ value: readPositionRTRef.current!.texture },
+    uSimSize:        { value: new THREE.Vector2(outW, outH) },
+    uPointSize:      { value: 2.0 * (window.devicePixelRatio||1) } // tweak thickness
+  },
+  depthTest:false, depthWrite:false,
+  blending:THREE.AdditiveBlending, transparent:true, toneMapped:false
+});
+// points need a scene & an ortho cam
+trailStampSceneRef.current = new THREE.Scene();
+trailStampSceneRef.current.add(new THREE.Points(geo, trailStampMatRef.current));
+
 
 
 
@@ -316,6 +390,15 @@ apiRef.current = {
   ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
   outW, outH,
   trailMat: trailMatRef.current!,
+    trailReadRT:  trailReadRTRef.current!,
+  trailWriteRT: trailWriteRTRef.current!,
+  trailW,       trailH,
+  trailOrthoCam: trailOrthoCamRef.current!,
+  trailDecayScene: trailDecaySceneRef.current!,
+  trailDecayMat:   trailDecayMatRef.current!,
+  trailStampScene: trailStampSceneRef.current!,
+  trailStampMat:   trailStampMatRef.current!,
+  trailOverlayMat: trailOverlayMat
 };
 (apiRef.current as any).trailOverlayMat = trailOverlayMat;
 onReady?.(apiRef.current);
