@@ -72,7 +72,7 @@ const mapUVtoLatLng = `
 `
 
 // Vertex shader: displace plane along Z using decoded elevation
-const VERT = `
+export const VERT = `
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uTexture;
@@ -399,6 +399,89 @@ const TRAIL_POINTS_FRAG = `
     fragColor = vec4(0.0, 1.0, 0.0, 0.65);
   }
 `;
+
+// === trail overlay shaders (plane over whole globe) ===
+
+// Vertex: reuse your globe placement and height displacement
+export const TRAIL_OVERLAY_VERT = `
+// TRAIL_OVERLAY_VERT_CORRECT
+precision highp float;
+varying vec2 vUv;
+
+uniform sampler2D uTerrainTexture; // same height tex you pass to points/mesh
+uniform float uExaggeration;       // same as elsewhere
+// uniform float uPressure;           // required by get_position_z()
+uniform float zOffset;             // optional extra lift
+
+// your helpers (unchanged)
+${get_position_z_shared_glsl}   // includes get_position_z(...)
+${mapUVtoLatLng}                // includes globeRadius=100, getLatLon, latLonToXYZ
+
+void main() {
+  vUv = uv;
+
+  // 1) uv -> (lat,lon) in degrees
+  vec2 latlon = getLatLon(uv);
+
+  // 2) base sphere at your globe radius/orientation
+  vec3 base = latLonToXYZ(latlon.x, latlon.y, globeRadius);
+
+  // 3) lift above terrain EXACTLY like your points:
+  //    get_position_z returns t in [0,1]; scale to world the same way
+  float hNorm  = get_position_z(uTerrainTexture, uv, 1.0);
+  float hWorld = uExaggeration * 50.0 * hNorm;   // matches UV_POINTS_VERT
+  vec3 nrm     = normalize(base);
+  vec3 pos     = base + nrm * (hWorld + zOffset);
+
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+
+`;
+
+// Fragment: for each pixel (vUv), check a tiny 3x3 neighborhood of index texels
+// in the positions texture (writeRT). If any stored particle position is near
+// this vUv, draw a green dot (like your point sprite).
+export const TRAIL_OVERLAY_FRAG = `
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform sampler2D uPositionsTex; // <-- bind to writeRT.texture (previous positions)
+  uniform vec2  uSimSize;          // (outW, outH) of the sim RT
+  uniform float uRadiusUV;         // dot radius in UV units
+  uniform float uOpacity;          // 0..1, match your 0.65
+
+  // fetch particle pos at integer index (i,j)
+  vec2 fetchPos(ivec2 ij){
+    ij = clamp(ij, ivec2(0), ivec2(int(uSimSize.x)-1, int(uSimSize.y)-1));
+    vec2 st = (vec2(ij) + 0.5) / uSimSize;
+    return texture2D(uPositionsTex, st).rg;
+  }
+
+  void main(){
+    // find nearest index cell to this fragment
+    vec2 idxF = vUv * uSimSize;
+    ivec2 ij0 = ivec2(floor(idxF));
+
+    // search a tiny 3x3 neighborhood for a nearby particle
+    float minD = 1e9;
+    for (int dj = -1; dj <= 1; ++dj){
+      for (int di = -1; di <= 1; ++di){
+        ivec2 ij = ij0 + ivec2(di, dj);
+        vec2 p   = fetchPos(ij);
+        // positions texture stores (u,v) directly in RG
+        float d = distance(p, vUv);
+        minD = min(minD, d);
+      }
+    }
+
+    // smooth dot edge like your round point sprite
+    float a = smoothstep(uRadiusUV, 0.0, minD);
+    if (a <= 0.0) discard;
+
+    gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+  }
+`;
+
 
 
 export type WindLayerAPI = {
@@ -920,8 +1003,9 @@ window.addEventListener("keyup", onKeyUp);
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
     // trails sample the latest positions
-L.trailMat.uniforms.uCurrentPosition.value = L.readRT.texture;  
+// L.trailMat.uniforms.uCurrentPosition.value = L.writeRT.texture;  
 
+(L as any).trailOverlayMat.uniforms.uPositionsTex.value = L.writeRT.texture;
   }
 
   // restore viewport/scissor exactly

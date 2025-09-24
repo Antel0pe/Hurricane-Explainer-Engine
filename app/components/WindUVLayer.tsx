@@ -2,7 +2,7 @@
   "use client";
   import * as THREE from "three";
   import { useEffect, useRef } from "react";
-import { WindLayerAPI } from "./HeightMesh_Shaders";
+import { TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, VERT, WindLayerAPI } from "./HeightMesh_Shaders";
 
 
   type Props = {
@@ -239,25 +239,87 @@ const trailMat = new THREE.ShaderMaterial({
 // reuse the SAME geometry so it draws at the same UV sampling
 const trailPts = new THREE.Points(geo, trailMat);
 trailPts.frustumCulled = false;
-scene.add(trailPts);
+// scene.add(trailPts);
 
 // stash refs
 trailMatRef.current = trailMat;
 trailPointsRef.current = trailPts;
 
+// === TRAIL OVERLAY PLANE (covers full UV extent, sits on globe) ===
+// was: new THREE.PlaneGeometry(aspect, 1, 1, 1)
+const trailOverlayGeo = new THREE.PlaneGeometry(aspect, 1, 256, 128);
+const trailOverlayMat = new THREE.ShaderMaterial({
+  vertexShader: TRAIL_OVERLAY_VERT,       // your working globe-mapped vertex
+  fragmentShader: `
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D uPositionsTex;
+    uniform vec2  uSimSize;
+    uniform float uRadiusUV;
+    uniform float uOpacity;
+    uniform vec3  uColor;
 
-                apiRef.current = {
-        simScene: simSceneRef.current!,      // your created sim scene
-        simCam:   simCameraRef.current!,     // your ortho cam
-        simMat:   simMatRef.current!,        // your sim material
-        readRT:   readPositionRTRef.current!,
-        writeRT:  writePositionRTRef.current!,
-        ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
-        outW, outH,
-        trailMat: trailMatRef.current!,
-      };
-      onReady?.(apiRef.current);
-          } else {
+    void main() {
+      // nearest index cell (previous frame)
+      vec2 idx = floor(vUv * uSimSize) + 0.5;
+      vec2 st  = idx / uSimSize;
+      vec2 p   = texture2D(uPositionsTex, st).rg;
+
+      // wrap-aware distance in U so seam at 0/1 doesn't drop dots
+      float du = abs(p.x - vUv.x);
+      du = min(du, 1.0 - du);
+      float dv = p.y - vUv.y;
+      float d  = sqrt(du*du + dv*dv);
+
+      float a = smoothstep(uRadiusUV, 0.0, d);
+      if (a <= 0.0) discard;
+
+      gl_FragColor = vec4(uColor, a * uOpacity);
+    }
+  `,
+  transparent: true,
+  depthTest: false,     // draw over everything
+  depthWrite: false,
+  blending: THREE.NormalBlending, // or AdditiveBlending if you want it to pop more
+  side: THREE.DoubleSide,
+  // IMPORTANT: leave GLSL1 (default). The shader uses texture2D/varying.
+  uniforms: {
+    // ---- vertex uniforms (required by TRAIL_OVERLAY_VERT)
+    uTerrainTexture: { value: heightTex },               // same height map as the mesh/points
+    uExaggeration:   { value: typeof exaggeration === 'number' ? exaggeration : 0.5 },
+    uPressure:       { value: pressureLevel },           // get_position_z() uses this!
+    zOffset:         { value: zOffset ?? 0.0 },
+
+    // ---- fragment uniforms (trail look)
+    uPositionsTex: { value: writePositionRTRef.current!.texture },   // previous frame
+    uSimSize:      { value: new THREE.Vector2(outW, outH) },
+    uRadiusUV:     { value: 0.1 / Math.max(outW, outH) },           // 0.25..0.6 is a good range
+    uOpacity:      { value: 1.0 },
+    uColor:        { value: new THREE.Color(0x00ff00) },             // bright green
+  }
+});
+
+const trailOverlayMesh = new THREE.Mesh(trailOverlayGeo, trailOverlayMat);
+trailOverlayMesh.frustumCulled = false;
+trailOverlayMesh.renderOrder = 9999;  // ensure it draws last
+trailOverlayMat.toneMapped = false;   // with ACES renderer, avoid tonemapping the UI overlay
+scene.add(trailOverlayMesh);
+
+
+
+apiRef.current = {
+  simScene: simSceneRef.current!,      // your created sim scene
+  simCam:   simCameraRef.current!,     // your ortho cam
+  simMat:   simMatRef.current!,        // your sim material
+  readRT:   readPositionRTRef.current!,
+  writeRT:  writePositionRTRef.current!,
+  ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
+  outW, outH,
+  trailMat: trailMatRef.current!,
+};
+(apiRef.current as any).trailOverlayMat = trailOverlayMat;
+onReady?.(apiRef.current);
+} else {
             // update existing
             const mat = uvMatRef.current!;
             const geo = uvGeoRef.current!;
