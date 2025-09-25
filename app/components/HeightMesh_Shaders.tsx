@@ -387,78 +387,6 @@ void main() {
   }
   `
 
-  // Add this next to your other shader strings:
-const TRAIL_POINTS_FRAG = `
-  precision highp float;
-  out vec4 fragColor;
-  void main(){
-    // round sprite mask
-    vec2 d = gl_PointCoord - 0.5;
-    if(dot(d,d) > 0.25) discard;
-    // solid green dot
-    fragColor = vec4(0.0, 1.0, 0.0, 0.65);
-  }
-`;
-
-// === trail overlay shaders (plane over whole globe) ===
-
-// Vertex: reuse your globe placement and height displacement
-export const TRAIL_OVERLAY_VERT = `
-// TRAIL_OVERLAY_VERT_CORRECT
-precision highp float;
-varying vec2 vUv;
-
-uniform sampler2D uTerrainTexture; // same height tex you pass to points/mesh
-uniform float uExaggeration;       // same as elsewhere
-// uniform float uPressure;           // required by get_position_z()
-uniform float zOffset;             // optional extra lift
-
-// your helpers (unchanged)
-${get_position_z_shared_glsl}   // includes get_position_z(...)
-${mapUVtoLatLng}                // includes globeRadius=100, getLatLon, latLonToXYZ
-
-void main() {
-  vUv = uv;
-
-  // 1) uv -> (lat,lon) in degrees
-  vec2 latlon = getLatLon(uv);
-
-  // 2) base sphere at your globe radius/orientation
-  vec3 base = latLonToXYZ(latlon.x, latlon.y, globeRadius);
-
-  // 3) lift above terrain EXACTLY like your points:
-  //    get_position_z returns t in [0,1]; scale to world the same way
-  float hNorm  = get_position_z(uTerrainTexture, uv, 1.0);
-  float hWorld = uExaggeration * 50.0 * hNorm;   // matches UV_POINTS_VERT
-  vec3 nrm     = normalize(base);
-  vec3 pos     = base + nrm * (hWorld + zOffset);
-
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-}
-
-`;
-
-// Fragment: for each pixel (vUv), check a tiny 3x3 neighborhood of index texels
-// in the positions texture (writeRT). If any stored particle position is near
-// this vUv, draw a green dot (like your point sprite).
-export const TRAIL_OVERLAY_FRAG = `
-precision highp float;
-varying vec2 vUv;
-uniform sampler2D uTrailTex;
-uniform vec3  uColor;
-uniform float uGain;
-uniform float uThreshold;
-
-void main(){
-  float v = texture2D(uTrailTex, vUv).r * uGain;
-  float a = smoothstep(uThreshold, uThreshold*1.5, v);
-  if (a<=0.0) discard;
-  gl_FragColor = vec4(uColor, a);
-  }
-`;
-
-
-
 export type WindLayerAPI = {
   simScene: THREE.Scene;
   simCam: THREE.OrthographicCamera;
@@ -468,23 +396,6 @@ export type WindLayerAPI = {
   ptsMat: THREE.ShaderMaterial;
   outW: number;
   outH: number;
-  trailMat: THREE.ShaderMaterial;
-
-    // NEW: trail accumulator
-  trailReadRT: THREE.WebGLRenderTarget;
-  trailWriteRT: THREE.WebGLRenderTarget;
-  trailW: number;
-  trailH: number;
-  trailOrthoCam: THREE.OrthographicCamera;
-
-  // passes
-  trailDecayScene: THREE.Scene;
-  trailDecayMat: THREE.ShaderMaterial;
-  trailStampScene: THREE.Scene;
-  trailStampMat: THREE.ShaderMaterial;
-
-  // overlay that samples the trail
-  trailOverlayMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -993,30 +904,6 @@ window.addEventListener("keyup", onKeyUp);
     // points sample the latest
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
-    // trails sample the latest positions
-// L.trailMat.uniforms.uCurrentPosition.value = L.writeRT.texture;  
-
-// (L as any).trailOverlayMat.uniforms.uPositionsTex.value = L.writeRT.texture;
-
-// 1) DECAY: trailWrite = trailRead * decay
-L.trailDecayMat.uniforms.uTrailPrev.value = L.trailReadRT.texture;
-renderer.setRenderTarget(L.trailWriteRT);
-renderer.setViewport(0, 0, L.trailW, L.trailH);
-renderer.setScissorTest(false);
-renderer.clear(); // optional
-renderer.render(L.trailDecayScene, L.trailOrthoCam);
-
-// 2) STAMP: add current particle positions into trailWrite
-L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture; // latest positions
-renderer.setRenderTarget(L.trailWriteRT);
-// // additive blending is on the material
-renderer.render(L.trailStampScene, L.trailOrthoCam);
-
-// // 3) SWAP trail read/write
-{ const t = L.trailReadRT; L.trailReadRT = L.trailWriteRT; L.trailWriteRT = t; }
-
-// 4) Make overlay sample the newest trail
-L.trailOverlayMat.uniforms.uTrailTex.value = L.trailReadRT.texture;
 
 renderer.setRenderTarget(null);
   }
@@ -1043,7 +930,6 @@ renderer.setRenderTarget(null);
 
   const handleLandTex = useCallback((tex: THREE.Texture) => {
   landTexRef.current = tex;
-  console.log('land tex')
   // optionally bump a version if you *need* to react elsewhere
   // setLandTexVersion(v => v + 1);
 }, []);
@@ -1176,7 +1062,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   onTextureChange={handleGph500}
 /> */}
 
-    <HeightMeshLayer
+    {/* <HeightMeshLayer
   url={`/api/gph/850/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -1190,7 +1076,7 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={1}
   onTextureChange={handleGph850}
-/>
+/> */}
 </>
 )}
     </div>;
