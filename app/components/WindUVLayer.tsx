@@ -386,7 +386,7 @@ const trailOverlayMat  = new THREE.ShaderMaterial({
   uniforms: {
     uTrailTex:  { value: trailRTRef.current!.texture }, // <<— sample the same RT you stamp into
     uOpacity:   { value: 0.9 },
-    uTint:      { value: new THREE.Color(0x22ff88).toArray() as any },
+    uTint:      { value: new THREE.Color(0x22ff88).toArray() },
     uLonOffset: { value: 0.25 },  // latLonToXYZ used lon+270°, i.e. +0.75 in [0,1]
     uFlipV:     { value: true },  // toggle if N/S looks flipped
   }
