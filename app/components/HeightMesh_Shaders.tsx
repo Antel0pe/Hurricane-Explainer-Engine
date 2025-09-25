@@ -432,10 +432,85 @@ uniform sampler2D uTex; // trailRT texture
 void main(){
   vec4 c = texture(uTex, vUv);
   float exists = step(0.0001, max(max(c.r, c.g), max(c.b, c.a)));
-  fragColor = vec4(vec3(exists), 1.0);
+  fragColor = vec4(0.0, exists,0.0, 1.0);
 }
 `;
 
+// OVERLAY (screen-space) quad to composite trailRT onto the main canvas
+export const TRAIL_OVERLAY_VERT = /* glsl */`
+out vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+export const TRAIL_OVERLAY_FRAG = /* glsl */`
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uTrail;
+void main() {
+  // trailRT is black (0) with white dots; additive blending ignores black
+  vec3 c = texture(uTrail, vUv).rgb;
+  fragColor = vec4(c, 1.0);
+}
+`;
+
+export const TRAIL_STAMP_MIN_VERT = /* glsl */`
+${GET_UV_SUBSAMPLED_GLSL3}         // you already have this chunk
+uniform sampler2D uCurrentPosition; // RG = (u,v)
+uniform int   uGridW, uGridH, uStep;
+uniform float uPointSize;
+
+void main() {
+  vec2 uvIdx = get_uv_from_vertex_id_subsampled(uGridW, uGridH, uStep);
+  vec2 uv    = texture(uCurrentPosition, uvIdx).rg;
+
+  // map (u,v in 0..1) → clip-space (-1..+1), flip V so v=0 is top row
+  vec2 ndc = vec2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+  gl_Position = vec4(ndc, 0.0, 1.0);
+  gl_PointSize = uPointSize;
+}
+`;
+
+export const TRAIL_GLOBE_VERT = /* glsl */`
+out vec3 vWorld;
+void main(){
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorld = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`;
+
+export const TRAIL_GLOBE_FRAG = /* glsl */`
+precision highp float;
+in vec3 vWorld; out vec4 fragColor;
+uniform sampler2D uTrailTex;
+uniform float uOpacity;
+uniform vec3  uTint;
+uniform float uLonOffset;  // seam shift; +270° → 0.75
+uniform bool  uFlipV;
+
+// world → equirect UV (match your latLonToXYZ that used z = -sin(theta))
+vec2 worldToUV(vec3 p){
+  vec3 n = normalize(p);
+  float lat = asin(clamp(n.y, -1.0, 1.0));    // [-pi/2, pi/2]
+  float lon = atan(-n.z, n.x);                 // NOTE the minus on z
+  float u = fract(lon / (2.0*3.14159265) + 0.5 + uLonOffset);
+  float v = 0.5 - lat / 3.14159265;
+  if (uFlipV) v = 1.0 - v;
+  return vec2(u, v);
+}
+
+void main(){
+  vec2 uv = worldToUV(vWorld);
+  vec3 t  = texture(uTrailTex, uv).rgb;
+  float I = clamp(max(max(t.r, t.g), t.b), 0.0, 1.0);
+  vec3  C = uTint * I;
+  fragColor = vec4(C, I * uOpacity);
+}
+`;
 
 
 export type WindLayerAPI = {
@@ -454,6 +529,16 @@ trailPtsMat: THREE.ShaderMaterial;
 trailPreviewScene: THREE.Scene;
 trailPreviewCam: THREE.OrthographicCamera;
 trailPreviewMat: THREE.ShaderMaterial;
+  overlayScene: THREE.Scene;
+  overlayCam: THREE.OrthographicCamera;
+  overlayMat: THREE.ShaderMaterial;
+// add to API type
+trailStampScene: THREE.Scene;
+trailStampCam: THREE.OrthographicCamera;
+trailStampMat: THREE.ShaderMaterial;
+// in WindLayerAPI type
+trailOverlayMesh: THREE.Mesh;
+trailOverlayMat: THREE.ShaderMaterial;
 
 };
 
@@ -995,8 +1080,11 @@ renderer.setScissorTest(false);
 L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
-// draw the dots in the same camera as the globe
-renderer.render(L.trailScene, camera);
+renderer.setRenderTarget(L.trailRT);
+renderer.setScissorTest(false);
+L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
+
 
 // return to default framebuffer
   renderer.setRenderTarget(null);
@@ -1026,6 +1114,9 @@ renderer.render(L.trailScene, camera);
     // restore viewport after overlay (optional since next frame re-stashes)
     renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
   }
+  for (const L of windLayersSetRef.current) {
+  // renderer.render(L.overlayScene, L.overlayCam);
+}
   requestAnimationFrame(loop);
   };
 
