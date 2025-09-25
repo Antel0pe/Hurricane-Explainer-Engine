@@ -274,7 +274,7 @@ const trailPtsMat = new THREE.ShaderMaterial({
   depthWrite: false,
   depthTest: false,
   transparent: false,
-  blending: THREE.NoBlending, // use AdditiveBlending if you want trails across frames
+  blending: THREE.AdditiveBlending, // use AdditiveBlending if you want trails across frames
   uniforms: {
     uTerrainTexture: { value: heightTex },
     uExaggeration:   { value: exaggeration ?? 0.5 },

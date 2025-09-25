@@ -991,10 +991,6 @@ renderer.setRenderTarget(L.trailRT);
 renderer.setViewport(0, 0, L.trailRT.width, L.trailRT.height);
 renderer.setScissorTest(false);
 
-// OPTION A: fresh dots each frame (no trails)
-renderer.setClearColor(0x000000, 0.0);
-renderer.clear(true, false, false);
-
 // keep both materials sampling the latest positions texture
 L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
