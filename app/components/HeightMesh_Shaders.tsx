@@ -267,7 +267,7 @@ const UV_POINTS_FRAG = `
   void main(){
     vec2 d = gl_PointCoord - 0.5;
     if(dot(d,d) > 0.25) discard;
-    fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    fragColor = vec4(1.0, 1.0, 1.0, 1.0);
   }
 `;
 
@@ -365,7 +365,7 @@ void main() {
 
       // Step 2: sample at midpoint and advance full dt with midpoint slope
       vec2 wind2_ms = sampleWindUV(midPos) * WIND_GAIN;                  // m/s
-      // wind2_ms = vec2(0,0);
+      // wind2_ms = vec2(-1,-1);
       float lat2_deg = latFromV(midPos.y);
       vec2 duv2 = deltaUV_from_ms(wind2_ms, lat2_deg, uDt);
 
@@ -480,6 +480,7 @@ void main(){
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorld = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
+  gl_PointSize = 1.0;
 }
 `;
 

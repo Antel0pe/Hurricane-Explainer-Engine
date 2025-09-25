@@ -256,7 +256,7 @@ const TRAIL_POINTS_FRAG = /* glsl */`
   out vec4 fragColor;
   void main() {
     vec2 d = gl_PointCoord - 0.5;
-    if (dot(d,d) > 0.25) discard; // round dot
+    if (dot(d,d) > 0.16) discard; // round dot
     fragColor = vec4(1.0);        // white
   }
 `;
@@ -363,7 +363,7 @@ const trailStampMat = new THREE.ShaderMaterial({
     uGridW:     { value: texW },
     uGridH:     { value: texH },
     uStep:      { value: UV_POINTS_STEP },
-    uPointSize: { value: Math.max(1.0, (window.devicePixelRatio || 1) * 2.0) },
+    uPointSize: { value: 1.0 },
   },
 });
 
@@ -387,7 +387,7 @@ const trailOverlayMat  = new THREE.ShaderMaterial({
     uTrailTex:  { value: trailRTRef.current!.texture }, // <<— sample the same RT you stamp into
     uOpacity:   { value: 0.9 },
     uTint:      { value: new THREE.Color(0x22ff88).toArray() as any },
-    uLonOffset: { value: 0.75 },  // latLonToXYZ used lon+270°, i.e. +0.75 in [0,1]
+    uLonOffset: { value: 0.25 },  // latLonToXYZ used lon+270°, i.e. +0.75 in [0,1]
     uFlipV:     { value: true },  // toggle if N/S looks flipped
   }
 });
