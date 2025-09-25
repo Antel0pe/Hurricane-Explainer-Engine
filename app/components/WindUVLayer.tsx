@@ -2,7 +2,7 @@
   "use client";
   import * as THREE from "three";
   import { useEffect, useRef } from "react";
-import { VERT, WindLayerAPI } from "./HeightMesh_Shaders";
+import { COPY_FRAG, COPY_VERT, PREVIEW_FRAG, PREVIEW_VERT, VERT, WindLayerAPI } from "./HeightMesh_Shaders";
 
 
   type Props = {
@@ -57,6 +57,8 @@ import { VERT, WindLayerAPI } from "./HeightMesh_Shaders";
     const outHRef = useRef(0);
 
     const apiRef = useRef<WindLayerAPI | null>(null);
+const trailRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
+
 
 
     useEffect(() => {
@@ -64,6 +66,45 @@ import { VERT, WindLayerAPI } from "./HeightMesh_Shaders";
 
       const loader = new THREE.TextureLoader();
       let disposed = false;
+
+      // right after: if (!renderer || !scene || !camera || !url) return;
+
+const makeTrailRT = (w: number, h: number) =>
+  new THREE.WebGLRenderTarget(w, h, {
+    format: THREE.RGBAFormat,
+    type: THREE.UnsignedByteType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
+
+{
+  // size it to cover the whole canvas (i.e., the visible globe)
+  const size = renderer.getSize(new THREE.Vector2());
+  const dpr  = renderer.getPixelRatio();
+  const W    = Math.max(1, Math.floor(size.x * dpr));
+  const H    = Math.max(1, Math.floor(size.y * dpr));
+
+  // (re)create if missing or size changed
+  if (!trailRTRef.current || trailRTRef.current.width !== W || trailRTRef.current.height !== H) {
+    trailRTRef.current?.dispose();
+    trailRTRef.current = makeTrailRT(W, H);
+
+    // clear to black (RGBA = 0,0,0,0) so it’s ready for additive writes
+    const prevRT = renderer.getRenderTarget();
+    const prevClr = renderer.getClearColor(new THREE.Color()).clone();
+    const prevA   = renderer.getClearAlpha();
+
+    renderer.setRenderTarget(trailRTRef.current);
+    renderer.setClearColor(0x000000, 0.0);
+    renderer.clear(true, false, false);
+
+    renderer.setRenderTarget(prevRT);
+    renderer.setClearColor(prevClr, prevA);
+  }
+}
+
 
       loader.load(
         url,
@@ -198,6 +239,64 @@ import { VERT, WindLayerAPI } from "./HeightMesh_Shaders";
             uvDimsRef.current = { w: texW, h: texH };
 
 
+// --- tiny on-screen preview for trailRT ---
+const trailPreviewScene = new THREE.Scene();
+const trailPreviewCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const trailPreviewGeom  = new THREE.PlaneGeometry(2, 2);
+const trailPreviewMat   = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  vertexShader: PREVIEW_VERT,
+  fragmentShader: PREVIEW_FRAG,
+  depthWrite: false,
+  depthTest: false,
+  transparent: false,
+  uniforms: {
+    uTex: { value: trailRTRef.current!.texture },
+  },
+});
+trailPreviewScene.add(new THREE.Mesh(trailPreviewGeom, trailPreviewMat));
+// Reuse your vertex shader (positions/sample uCurrentPosition, etc.)
+const TRAIL_POINTS_VERT = UV_POINTS_VERT;
+const TRAIL_POINTS_FRAG = /* glsl */`
+  precision highp float;
+  out vec4 fragColor;
+  void main() {
+    vec2 d = gl_PointCoord - 0.5;
+    if (dot(d,d) > 0.25) discard; // round dot
+    fragColor = vec4(1.0);        // white
+  }
+`;
+
+const trailPtsMat = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  vertexShader: TRAIL_POINTS_VERT,
+  fragmentShader: TRAIL_POINTS_FRAG,
+  depthWrite: false,
+  depthTest: false,
+  transparent: false,
+  blending: THREE.NoBlending, // use AdditiveBlending if you want trails across frames
+  uniforms: {
+    uTerrainTexture: { value: heightTex },
+    uExaggeration:   { value: exaggeration ?? 0.5 },
+    uAspect:         { value: aspect },
+    uPointSize:      { value: (1.5 * (window.devicePixelRatio || 1)) * 3.0 },
+    uGridW:          { value: texW },
+    uGridH:          { value: texH },
+    uStep:           { value: UV_POINTS_STEP },
+    uAboveTerrain:   { value: 0.1 },
+    uCurrentPosition:{ value: readPositionRTRef.current!.texture },
+    uSimSize:        { value: new THREE.Vector2(outW, outH) },
+    uPressure:       { value: pressureLevel },
+    zOffset:         { value: zOffset },
+  }
+});
+
+const trailScene = new THREE.Scene();
+const trailPoints = new THREE.Points(geo, trailPtsMat); // reuse same geometry
+trailPoints.frustumCulled = false;
+trailScene.add(trailPoints);
+
+
 
 apiRef.current = {
   simScene: simSceneRef.current!,      // your created sim scene
@@ -207,6 +306,12 @@ apiRef.current = {
   writeRT:  writePositionRTRef.current!,
   ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
   outW, outH,
+  trailRT:  trailRTRef.current!, 
+  trailScene,
+  trailPtsMat,  
+  trailPreviewScene,
+  trailPreviewCam,
+  trailPreviewMat
 };
 onReady?.(apiRef.current);
 } else {
@@ -278,6 +383,10 @@ onReady?.(apiRef.current);
           if (apiRef.current && typeof onRemove === "function") {
             try { onRemove(apiRef.current); } catch {}
           }
+
+          trailRTRef.current?.dispose();
+trailRTRef.current = null;
+
 
         // clean up this layer only
         uvPointsRef.current && scene?.remove(uvPointsRef.current);

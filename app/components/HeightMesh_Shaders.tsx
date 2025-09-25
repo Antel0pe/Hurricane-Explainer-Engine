@@ -386,6 +386,57 @@ void main() {
       fragColor = vec4(newPos, totalLifeThreshold, lifeExpended);
   }
   `
+// COPY_VERT (GLSL3)
+export const COPY_VERT = /* glsl */`
+out vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+// COPY_FRAG (GLSL3)
+export const COPY_FRAG = /* glsl */`
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+
+uniform sampler2D uSrc;      // readRT texture
+uniform vec2 uSrcSize;       // (outW, outH)
+uniform vec2 uDstSize;       // (trailRT.width, trailRT.height)
+
+// Map each destination pixel to the corresponding source pixel (nearest)
+void main() {
+  vec2 dstPix  = gl_FragCoord.xy - vec2(0.5);
+  vec2 srcPix  = dstPix * (uSrcSize / uDstSize) + vec2(0.5);
+  vec2 srcUV   = srcPix / uSrcSize;
+  fragColor    = texture(uSrc, srcUV);
+}
+`;
+// PREVIEW_VERT (GLSL3)
+export const PREVIEW_VERT = /* glsl */`
+out vec2 vUv;
+void main(){
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+// PREVIEW_FRAG (GLSL3)
+export const PREVIEW_FRAG = /* glsl */`
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uTex; // trailRT texture
+
+void main(){
+  vec4 c = texture(uTex, vUv);
+  float exists = step(0.0001, max(max(c.r, c.g), max(c.b, c.a)));
+  fragColor = vec4(vec3(exists), 1.0);
+}
+`;
+
+
 
 export type WindLayerAPI = {
   simScene: THREE.Scene;
@@ -396,6 +447,14 @@ export type WindLayerAPI = {
   ptsMat: THREE.ShaderMaterial;
   outW: number;
   outH: number;
+  trailRT: THREE.WebGLRenderTarget;
+  trailScene: THREE.Scene;
+// trailCopyCam: THREE.OrthographicCamera;
+trailPtsMat: THREE.ShaderMaterial;
+trailPreviewScene: THREE.Scene;
+trailPreviewCam: THREE.OrthographicCamera;
+trailPreviewMat: THREE.ShaderMaterial;
+
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -448,6 +507,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
   // --- renderer / scene / camera ---
   const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2 });
+  renderer.autoClear = false;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio ?? 1, 2));
   renderer.setSize(w, h);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -874,6 +934,29 @@ window.addEventListener("keyup", onKeyUp);
   //   requestAnimationFrame(loop);
   //   return () => { running = false; };
 
+function debugTrailRT(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget) {
+  const w = rt.width, h = rt.height;
+  const buf = new Uint8Array(w * h * 4);
+
+  // read pixels
+  renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+
+  let zeroCount = 0;
+  const total = w * h;
+
+  for (let i = 0; i < total; i++) {
+    const r = buf[i * 4 + 0];
+    const g = buf[i * 4 + 1];
+    const b = buf[i * 4 + 2];
+    const a = buf[i * 4 + 3];
+    if (r === 1 && g === 1 && b === 1 && a === 1) {
+      zeroCount++;
+    }
+  }
+
+  const pct = (zeroCount / total * 100).toFixed(2);
+  console.log(`trailRT zeros: ${zeroCount}/${total} (${pct}%)`);
+}
 
   const loop = () => {
   if (!running) return;
@@ -903,9 +986,24 @@ window.addEventListener("keyup", onKeyUp);
 
     // points sample the latest
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+// --- draw particles into trailRT as white dots ---
+renderer.setRenderTarget(L.trailRT);
+renderer.setViewport(0, 0, L.trailRT.width, L.trailRT.height);
+renderer.setScissorTest(false);
 
+// OPTION A: fresh dots each frame (no trails)
+renderer.setClearColor(0x000000, 0.0);
+renderer.clear(true, false, false);
 
-renderer.setRenderTarget(null);
+// keep both materials sampling the latest positions texture
+L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+
+// draw the dots in the same camera as the globe
+renderer.render(L.trailScene, camera);
+
+// return to default framebuffer
+  renderer.setRenderTarget(null);
   }
 
   // restore viewport/scissor exactly
@@ -915,6 +1013,23 @@ renderer.setRenderTarget(null);
 
   controls.update();
   renderer.render(scene, camera);
+
+    // --- draw ONE preview (bottom-left) on top of the scene ---
+  const anyLayer = windLayersSetRef.current.values().next().value as WindLayerAPI | undefined;
+  if (anyLayer) {
+    const canvasSize = renderer.getSize(new THREE.Vector2());
+    const dpr = renderer.getPixelRatio();
+    const pvW = Math.max(1, Math.floor(canvasSize.x * dpr * 0.25));
+    const pvH = Math.max(1, Math.floor(canvasSize.y * dpr * 0.25));
+    renderer.setViewport(0, 0, pvW, pvH);
+    renderer.setScissorTest(false);
+    anyLayer.trailPreviewMat.uniforms.uTex.value = anyLayer.trailRT.texture;
+    // no clear here; we want to overlay
+    renderer.render(anyLayer.trailPreviewScene, anyLayer.trailPreviewCam);
+
+    // restore viewport after overlay (optional since next frame re-stashes)
+    renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+  }
   requestAnimationFrame(loop);
   };
 
