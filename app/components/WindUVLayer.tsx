@@ -57,7 +57,8 @@ import { COPY_FRAG, COPY_VERT, PREVIEW_FRAG, PREVIEW_VERT, TRAIL_GLOBE_FRAG, TRA
     const outHRef = useRef(0);
 
     const apiRef = useRef<WindLayerAPI | null>(null);
-const trailRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
+const trailReadRT = useRef<THREE.WebGLRenderTarget | null>(null);
+const trailWriteRT = useRef<THREE.WebGLRenderTarget | null>(null);
 
 
 
@@ -176,15 +177,34 @@ const makeTrailRT = (w: number, h: number) =>
 
 {
   // (re)create if missing or size changed
-  if (!trailRTRef.current) {
-    trailRTRef.current = makeTrailRT(texW, texH);
+  if (!trailReadRT.current) {
+    trailReadRT.current = makeTrailRT(texW, texH);
 
     // clear to black (RGBA = 0,0,0,0) so it’s ready for additive writes
     const prevRT = renderer.getRenderTarget();
     const prevClr = renderer.getClearColor(new THREE.Color()).clone();
     const prevA   = renderer.getClearAlpha();
 
-    renderer.setRenderTarget(trailRTRef.current);
+    renderer.setRenderTarget(trailReadRT.current);
+    renderer.setClearColor(0x000000, 0.0);
+    renderer.clear(true, false, false);
+
+    renderer.setRenderTarget(prevRT);
+    renderer.setClearColor(prevClr, prevA);
+  }
+}
+
+{
+  // (re)create if missing or size changed
+  if (!trailWriteRT.current) {
+    trailWriteRT.current = makeTrailRT(texW, texH);
+
+    // clear to black (RGBA = 0,0,0,0) so it’s ready for additive writes
+    const prevRT = renderer.getRenderTarget();
+    const prevClr = renderer.getClearColor(new THREE.Color()).clone();
+    const prevA   = renderer.getClearAlpha();
+
+    renderer.setRenderTarget(trailWriteRT.current);
     renderer.setClearColor(0x000000, 0.0);
     renderer.clear(true, false, false);
 
@@ -245,7 +265,7 @@ const trailPreviewMat   = new THREE.ShaderMaterial({
   depthTest: false,
   transparent: false,
   uniforms: {
-    uTex: { value: trailRTRef.current!.texture },
+    uTex: { value: trailWriteRT.current!.texture },
   },
 });
 trailPreviewScene.add(new THREE.Mesh(trailPreviewGeom, trailPreviewMat));
@@ -289,24 +309,6 @@ const trailScene = new THREE.Scene();
 const trailPoints = new THREE.Points(geo, trailPtsMat); // reuse same geometry
 trailPoints.frustumCulled = false;
 trailScene.add(trailPoints);
-// --- overlay (screen-space) that composites trailRT onto the main canvas ---
-const overlayScene = new THREE.Scene();
-const overlayCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const overlayGeom  = new THREE.PlaneGeometry(2, 2);
-const overlayMat   = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: TRAIL_OVERLAY_VERT,
-  fragmentShader: TRAIL_OVERLAY_FRAG,
-  depthWrite: false,
-  depthTest: false,
-  transparent: true,
-  blending: THREE.AdditiveBlending,  // add the white dots over the scene
-  uniforms: { uTrail: { value: trailRTRef.current!.texture } }
-});
-// avoid tone mapping dimming your pure white additions
-overlayMat.toneMapped = false;
-
-overlayScene.add(new THREE.Mesh(overlayGeom, overlayMat));
 
 // --- keep trailRT sized to the renderer’s backbuffer (call each frame or on resize) ---
 const ensureTrailSize = (renderer: THREE.WebGLRenderer) => {
@@ -314,9 +316,9 @@ const ensureTrailSize = (renderer: THREE.WebGLRenderer) => {
   const dpr  = renderer.getPixelRatio();
   const W = Math.max(1, Math.floor(size.x * dpr));
   const H = Math.max(1, Math.floor(size.y * dpr));
-  if (!trailRTRef.current || trailRTRef.current.width !== W || trailRTRef.current.height !== H) {
+  if (!trailReadRT.current || trailReadRT.current.width !== W || trailReadRT.current.height !== H) {
     // recreate RT
-    const prevRT = trailRTRef.current;
+    const prevRT = trailReadRT.current;
     const newRT  = new THREE.WebGLRenderTarget(W, H, {
       format: THREE.RGBAFormat,
       type: THREE.UnsignedByteType,
@@ -340,7 +342,6 @@ const ensureTrailSize = (renderer: THREE.WebGLRenderer) => {
     // trailRTRef.current = newRT;
     // overlayMat.uniforms.uTrail.value = newRT.texture;
     // trailPreviewMat.uniforms.uTex.value = newRT.texture;
-    overlayMat.uniforms.uTrail.value = readPositionRTRef.current;
     // clean old
     prevRT?.dispose();
   }
@@ -384,7 +385,7 @@ const trailOverlayMat  = new THREE.ShaderMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
   uniforms: {
-    uTrailTex:  { value: trailRTRef.current!.texture }, // <<— sample the same RT you stamp into
+    uTrailTex:  { value: trailWriteRT.current!.texture }, // <<— sample the same RT you stamp into
     uOpacity:   { value: 0.9 },
     uTint:      { value: new THREE.Color(0x22ff88).toArray() },
     uLonOffset: { value: 0.25 },  // latLonToXYZ used lon+270°, i.e. +0.75 in [0,1]
@@ -408,15 +409,13 @@ apiRef.current = {
   writeRT:  writePositionRTRef.current!,
   ptsMat:   uvMatRef.current!,         // the points ShaderMaterial
   outW, outH,
-  trailRT:  trailRTRef.current!, 
+  trailReadRT:  trailReadRT.current!, 
+  trailWriteRT: trailWriteRT.current!,
   trailScene,
   trailPtsMat,  
   trailPreviewScene,
   trailPreviewCam,
   trailPreviewMat,
-    overlayScene,
-  overlayCam,
-  overlayMat,
   trailStampScene,
   trailStampCam,
   trailStampMat,
@@ -494,8 +493,11 @@ onReady?.(apiRef.current);
             try { onRemove(apiRef.current); } catch {}
           }
 
-          trailRTRef.current?.dispose();
-trailRTRef.current = null;
+          trailReadRT.current?.dispose();
+trailReadRT.current = null;
+
+          trailWriteRT.current?.dispose();
+trailWriteRT.current = null;
 
 
         // clean up this layer only

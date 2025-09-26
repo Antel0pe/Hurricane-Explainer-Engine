@@ -523,16 +523,14 @@ export type WindLayerAPI = {
   ptsMat: THREE.ShaderMaterial;
   outW: number;
   outH: number;
-  trailRT: THREE.WebGLRenderTarget;
+  trailReadRT: THREE.WebGLRenderTarget;
+  trailWriteRT: THREE.WebGLRenderTarget;
   trailScene: THREE.Scene;
 // trailCopyCam: THREE.OrthographicCamera;
 trailPtsMat: THREE.ShaderMaterial;
 trailPreviewScene: THREE.Scene;
 trailPreviewCam: THREE.OrthographicCamera;
 trailPreviewMat: THREE.ShaderMaterial;
-  overlayScene: THREE.Scene;
-  overlayCam: THREE.OrthographicCamera;
-  overlayMat: THREE.ShaderMaterial;
 // add to API type
 trailStampScene: THREE.Scene;
 trailStampCam: THREE.OrthographicCamera;
@@ -1072,19 +1070,34 @@ function debugTrailRT(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget
 
     // points sample the latest
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+
+        // swap
+    const t1 = L.trailReadRT;
+    L.trailReadRT = L.trailWriteRT;
+    L.trailWriteRT = t1;
+
 // --- draw particles into trailRT as white dots ---
-renderer.setRenderTarget(L.trailRT);
-renderer.setViewport(0, 0, L.trailRT.width, L.trailRT.height);
+renderer.setRenderTarget(L.trailReadRT);
+renderer.setViewport(0, 0, L.trailReadRT.width, L.trailReadRT.height);
 renderer.setScissorTest(false);
 
 // keep both materials sampling the latest positions texture
 L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
-renderer.setRenderTarget(L.trailRT);
+renderer.setRenderTarget(L.trailReadRT);
 renderer.setScissorTest(false);
 L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
+
+    // swap
+    const t = L.trailReadRT;
+    L.trailReadRT = L.trailWriteRT;
+    L.trailWriteRT = t;
+
+    console.log('read', L.trailReadRT.texture.uuid, 'write', L.trailWriteRT.texture.uuid,
+            'overlay', L.trailOverlayMat.uniforms.uTrailTex.value.uuid);
+
 
 
 // return to default framebuffer
@@ -1108,7 +1121,7 @@ renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
     const pvH = Math.max(1, Math.floor(canvasSize.y * dpr * 0.25));
     renderer.setViewport(0, 0, pvW, pvH);
     renderer.setScissorTest(false);
-    anyLayer.trailPreviewMat.uniforms.uTex.value = anyLayer.trailRT.texture;
+    anyLayer.trailPreviewMat.uniforms.uTex.value = anyLayer.trailWriteRT.texture;
     // no clear here; we want to overlay
     renderer.render(anyLayer.trailPreviewScene, anyLayer.trailPreviewCam);
 
