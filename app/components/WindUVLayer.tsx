@@ -2,7 +2,7 @@
   "use client";
   import * as THREE from "three";
   import { useEffect, useRef } from "react";
-import { COPY_FRAG, COPY_VERT, PREVIEW_FRAG, PREVIEW_VERT, TRAIL_GLOBE_FRAG, TRAIL_GLOBE_VERT, TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, TRAIL_STAMP_MIN_VERT, VERT, WindLayerAPI } from "./HeightMesh_Shaders";
+import { COPY_FRAG, COPY_MIN_FRAG, COPY_MIN_VERT, COPY_VERT, PREVIEW_FRAG, PREVIEW_VERT, TRAIL_GLOBE_FRAG, TRAIL_GLOBE_VERT, TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, TRAIL_STAMP_MIN_VERT, VERT, WindLayerAPI } from "./HeightMesh_Shaders";
 
 
   type Props = {
@@ -399,6 +399,21 @@ trailOverlayMesh.frustumCulled = false;
 trailOverlayMesh.renderOrder   = 10;   // draw after base globe
 scene.add(trailOverlayMesh);           // <— add to the MAIN scene (or globe.add(...) if you have it)
 
+// one-time setup beside your layer init
+const copyScene = new THREE.Scene();
+const copyCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const copyGeom  = new THREE.PlaneGeometry(2, 2);
+const copyMat   = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  vertexShader: COPY_MIN_VERT,
+  fragmentShader: COPY_MIN_FRAG,
+  depthTest: false,
+  depthWrite: false,
+  transparent: false,
+  blending: THREE.NoBlending,   // <- exact copy
+  uniforms: { uSrc: { value: null } }
+});
+copyScene.add(new THREE.Mesh(copyGeom, copyMat));
 
 
 apiRef.current = {
@@ -421,6 +436,9 @@ apiRef.current = {
   trailStampMat,
     trailOverlayMesh,
   trailOverlayMat,
+  copyScene,
+  copyMat,
+  copyCam,
 };
 onReady?.(apiRef.current);
 } else {

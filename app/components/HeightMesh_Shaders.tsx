@@ -513,6 +513,27 @@ void main(){
 }
 `;
 
+export const COPY_MIN_VERT = `
+// COPY_MIN_VERT (GLSL3)
+out vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+export const COPY_MIN_FRAG = `
+// COPY_MIN_FRAG (GLSL3)
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uSrc;
+void main() {
+  vec4 original = texture(uSrc, vUv);
+  // fragColor = vec4(0.0, original.g * 0.5, 0.0, 1.0);
+  fragColor = original * 0.95;
+}
+`;
 
 export type WindLayerAPI = {
   simScene: THREE.Scene;
@@ -538,7 +559,9 @@ trailStampMat: THREE.ShaderMaterial;
 // in WindLayerAPI type
 trailOverlayMesh: THREE.Mesh;
 trailOverlayMat: THREE.ShaderMaterial;
-
+copyScene:THREE.Scene;
+copyCam: THREE.OrthographicCamera;
+copyMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -1071,29 +1094,45 @@ function debugTrailRT(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget
     // points sample the latest
     L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
+    // -- copy + stamp into the SAME RT without clearing between them
+// const prevAC = renderer.autoClear;
+// renderer.autoClear = false;
+
+    // copy pass
+    L.copyMat.uniforms.uSrc.value = L.trailReadRT.texture;
+    renderer.setRenderTarget(L.trailWriteRT);
+// renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
+// renderer.setScissorTest(false);
+renderer.clear();
+renderer.render(L.copyScene, L.copyCam);
+
         // swap
-    const t1 = L.trailReadRT;
-    L.trailReadRT = L.trailWriteRT;
-    L.trailWriteRT = t1;
+    // const t1 = L.trailReadRT;
+    // L.trailReadRT = L.trailWriteRT;
+    // L.trailWriteRT = t1;
 
 // --- draw particles into trailRT as white dots ---
-renderer.setRenderTarget(L.trailReadRT);
-renderer.setViewport(0, 0, L.trailReadRT.width, L.trailReadRT.height);
+renderer.setRenderTarget(L.trailWriteRT);
+renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
 renderer.setScissorTest(false);
 
 // keep both materials sampling the latest positions texture
 L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
-renderer.setRenderTarget(L.trailReadRT);
+renderer.setRenderTarget(L.trailWriteRT);
 renderer.setScissorTest(false);
 L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
+
+// renderer.autoClear = prevAC;
 
     // swap
     const t = L.trailReadRT;
     L.trailReadRT = L.trailWriteRT;
     L.trailWriteRT = t;
+
+    L.trailOverlayMat.uniforms.uTrailTex.value = L.trailReadRT.texture;
 
     console.log('read', L.trailReadRT.texture.uuid, 'write', L.trailWriteRT.texture.uuid,
             'overlay', L.trailOverlayMat.uniforms.uTrailTex.value.uuid);
