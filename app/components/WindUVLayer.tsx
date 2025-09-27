@@ -2,7 +2,7 @@
   "use client";
   import * as THREE from "three";
   import { useEffect, useRef } from "react";
-import { COPY_FRAG, COPY_MIN_FRAG, COPY_MIN_VERT, COPY_VERT, PREVIEW_FRAG, PREVIEW_VERT, TRAIL_GLOBE_FRAG, TRAIL_GLOBE_VERT, TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, TRAIL_STAMP_MIN_VERT, VERT, WindLayerAPI } from "./HeightMesh_Shaders";
+import { TRAIL_DECAY_FRAG, TRAIL_DECAY_VERT, PREVIEW_FRAG, PREVIEW_VERT, TRAIL_GLOBE_FRAG, TRAIL_GLOBE_VERT, TRAIL_OVERLAY_FRAG, TRAIL_OVERLAY_VERT, TRAIL_STAMP_MIN_VERT, VERT, WindLayerAPI } from "./HeightMesh_Shaders";
 
 
   type Props = {
@@ -253,22 +253,6 @@ const makeTrailRT = (w: number, h: number) =>
             uvDimsRef.current = { w: texW, h: texH };
 
 
-// --- tiny on-screen preview for trailRT ---
-const trailPreviewScene = new THREE.Scene();
-const trailPreviewCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const trailPreviewGeom  = new THREE.PlaneGeometry(2, 2);
-const trailPreviewMat   = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: PREVIEW_VERT,
-  fragmentShader: PREVIEW_FRAG,
-  depthWrite: false,
-  depthTest: false,
-  transparent: false,
-  uniforms: {
-    uTex: { value: trailWriteRT.current!.texture },
-  },
-});
-trailPreviewScene.add(new THREE.Mesh(trailPreviewGeom, trailPreviewMat));
 // Reuse your vertex shader (positions/sample uCurrentPosition, etc.)
 const TRAIL_POINTS_VERT = UV_POINTS_VERT;
 const TRAIL_POINTS_FRAG = /* glsl */`
@@ -309,43 +293,6 @@ const trailScene = new THREE.Scene();
 const trailPoints = new THREE.Points(geo, trailPtsMat); // reuse same geometry
 trailPoints.frustumCulled = false;
 trailScene.add(trailPoints);
-
-// --- keep trailRT sized to the renderer’s backbuffer (call each frame or on resize) ---
-const ensureTrailSize = (renderer: THREE.WebGLRenderer) => {
-  const size = renderer.getSize(new THREE.Vector2());
-  const dpr  = renderer.getPixelRatio();
-  const W = Math.max(1, Math.floor(size.x * dpr));
-  const H = Math.max(1, Math.floor(size.y * dpr));
-  if (!trailReadRT.current || trailReadRT.current.width !== W || trailReadRT.current.height !== H) {
-    // recreate RT
-    const prevRT = trailReadRT.current;
-    const newRT  = new THREE.WebGLRenderTarget(W, H, {
-      format: THREE.RGBAFormat,
-      type: THREE.UnsignedByteType,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: false,
-      stencilBuffer: false,
-    });
-
-    // clear to black
-    const prev = renderer.getRenderTarget();
-    const prevClr = renderer.getClearColor(new THREE.Color()).clone();
-    const prevA = renderer.getClearAlpha();
-    renderer.setRenderTarget(newRT);
-    renderer.setClearColor(0x000000, 0.0);
-    renderer.clear(true, false, false);
-    renderer.setRenderTarget(prev);
-    renderer.setClearColor(prevClr, prevA);
-
-    // swap & rebind everywhere
-    // trailRTRef.current = newRT;
-    // overlayMat.uniforms.uTrail.value = newRT.texture;
-    // trailPreviewMat.uniforms.uTex.value = newRT.texture;
-    // clean old
-    prevRT?.dispose();
-  }
-};
 
 // UV-space stamping into trailRT
 const trailStampCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -405,8 +352,8 @@ const copyCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const copyGeom  = new THREE.PlaneGeometry(2, 2);
 const copyMat   = new THREE.ShaderMaterial({
   glslVersion: THREE.GLSL3,
-  vertexShader: COPY_MIN_VERT,
-  fragmentShader: COPY_MIN_FRAG,
+  vertexShader: TRAIL_DECAY_VERT,
+  fragmentShader: TRAIL_DECAY_FRAG,
   depthTest: false,
   depthWrite: false,
   transparent: false,
@@ -428,17 +375,14 @@ apiRef.current = {
   trailWriteRT: trailWriteRT.current!,
   trailScene,
   trailPtsMat,  
-  trailPreviewScene,
-  trailPreviewCam,
-  trailPreviewMat,
   trailStampScene,
   trailStampCam,
   trailStampMat,
     trailOverlayMesh,
   trailOverlayMat,
-  copyScene,
-  copyMat,
-  copyCam,
+  decayScene: copyScene,
+  decayMat: copyMat,
+  decayCam: copyCam,
 };
 onReady?.(apiRef.current);
 } else {

@@ -513,7 +513,7 @@ void main(){
 }
 `;
 
-export const COPY_MIN_VERT = `
+export const TRAIL_DECAY_VERT = `
 // COPY_MIN_VERT (GLSL3)
 out vec2 vUv;
 void main() {
@@ -522,7 +522,7 @@ void main() {
 }
 `;
 
-export const COPY_MIN_FRAG = `
+export const TRAIL_DECAY_FRAG = `
 // COPY_MIN_FRAG (GLSL3)
 precision highp float;
 in vec2 vUv;
@@ -531,7 +531,7 @@ uniform sampler2D uSrc;
 void main() {
   vec4 original = texture(uSrc, vUv);
   // fragColor = vec4(0.0, original.g * 0.5, 0.0, 1.0);
-  fragColor = original * 0.95;
+  fragColor = original * 0.99;
 }
 `;
 
@@ -547,21 +547,15 @@ export type WindLayerAPI = {
   trailReadRT: THREE.WebGLRenderTarget;
   trailWriteRT: THREE.WebGLRenderTarget;
   trailScene: THREE.Scene;
-// trailCopyCam: THREE.OrthographicCamera;
 trailPtsMat: THREE.ShaderMaterial;
-trailPreviewScene: THREE.Scene;
-trailPreviewCam: THREE.OrthographicCamera;
-trailPreviewMat: THREE.ShaderMaterial;
-// add to API type
 trailStampScene: THREE.Scene;
 trailStampCam: THREE.OrthographicCamera;
 trailStampMat: THREE.ShaderMaterial;
-// in WindLayerAPI type
 trailOverlayMesh: THREE.Mesh;
 trailOverlayMat: THREE.ShaderMaterial;
-copyScene:THREE.Scene;
-copyCam: THREE.OrthographicCamera;
-copyMat: THREE.ShaderMaterial;
+decayScene:THREE.Scene;
+decayCam: THREE.OrthographicCamera;
+decayMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -593,14 +587,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const readPositionRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const writePositionRTRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const simDimsRef = useRef<{ w: number; h: number } | null>(null);
-  const simSceneRef = useRef<THREE.Scene|null>(null);
-  const simCameraRef = useRef<THREE.OrthographicCamera|null>(null);
-  const simMatRef   = useRef<THREE.ShaderMaterial|null>(null);
-  const outWRef = useRef<number>(0);
-  const outHRef = useRef<number>(0);
-  const hasSetCameraPosition = useRef(false);
-  const hasSetCameraPosition2 = useRef(false);
-  const hasSetCameraPosition3 = useRef(false);
   const windLayersSetRef = useRef<Set<WindLayerAPI>>(new Set());
   const [engineReady, setEngineReady] = useState(false);
 
@@ -1099,12 +1085,12 @@ function debugTrailRT(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget
 // renderer.autoClear = false;
 
     // copy pass
-    L.copyMat.uniforms.uSrc.value = L.trailReadRT.texture;
+    L.decayMat.uniforms.uSrc.value = L.trailReadRT.texture;
     renderer.setRenderTarget(L.trailWriteRT);
 // renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
 // renderer.setScissorTest(false);
 renderer.clear();
-renderer.render(L.copyScene, L.copyCam);
+renderer.render(L.decayScene, L.decayCam);
 
         // swap
     // const t1 = L.trailReadRT;
@@ -1134,11 +1120,6 @@ renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
 
     L.trailOverlayMat.uniforms.uTrailTex.value = L.trailReadRT.texture;
 
-    console.log('read', L.trailReadRT.texture.uuid, 'write', L.trailWriteRT.texture.uuid,
-            'overlay', L.trailOverlayMat.uniforms.uTrailTex.value.uuid);
-
-
-
 // return to default framebuffer
   renderer.setRenderTarget(null);
   }
@@ -1151,25 +1132,6 @@ renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
   controls.update();
   renderer.render(scene, camera);
 
-    // --- draw ONE preview (bottom-left) on top of the scene ---
-  const anyLayer = windLayersSetRef.current.values().next().value as WindLayerAPI | undefined;
-  if (anyLayer) {
-    const canvasSize = renderer.getSize(new THREE.Vector2());
-    const dpr = renderer.getPixelRatio();
-    const pvW = Math.max(1, Math.floor(canvasSize.x * dpr * 0.25));
-    const pvH = Math.max(1, Math.floor(canvasSize.y * dpr * 0.25));
-    renderer.setViewport(0, 0, pvW, pvH);
-    renderer.setScissorTest(false);
-    anyLayer.trailPreviewMat.uniforms.uTex.value = anyLayer.trailWriteRT.texture;
-    // no clear here; we want to overlay
-    renderer.render(anyLayer.trailPreviewScene, anyLayer.trailPreviewCam);
-
-    // restore viewport after overlay (optional since next frame re-stashes)
-    renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-  }
-  for (const L of windLayersSetRef.current) {
-  // renderer.render(L.overlayScene, L.overlayCam);
-}
   requestAnimationFrame(loop);
   };
 
@@ -1195,7 +1157,6 @@ const handleGph250 = useCallback((tex: THREE.Texture) => {
 }, []);
 
 const handleGph500 = useCallback((tex: THREE.Texture) => {
-  console.log('gph 500')
   heightTexRef2.current = tex;
   setHeightTexVersion2(v => v + 1);
 }, []);
