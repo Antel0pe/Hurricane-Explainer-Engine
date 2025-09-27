@@ -1,17 +1,17 @@
-// app/api/uv/[datehour]/route.ts
+// app/api/cloud_cover/[datehour]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { parseDatehour, uvDir, boundsHeaders } from "../../../_lib/shared";
+import { parseDatehour, cloudCoverPath, boundsHeaders } from "../../_lib/shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: NextRequest,
-  context: { params: Promise<{ pressureLevel: string; datehour: string }> }
+  context: { params: Promise<{ datehour: string }> }
 ) {
-  const { pressureLevel, datehour } = await context.params;
+  const { datehour } = await context.params;
 
   let dt: Date;
   try {
@@ -26,7 +26,7 @@ export async function GET(
     dt.getUTCDate().toString().padStart(2, "0") +
     dt.getUTCHours().toString().padStart(2, "0");
 
-  const imgPath = path.join(uvDir(pressureLevel), `uv_${ts}.png`);
+  const imgPath = path.join(cloudCoverPath(), `clouds_lmh_${ts}.png`);
 
   try {
     const buf = await readFile(imgPath);

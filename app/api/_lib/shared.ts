@@ -23,12 +23,16 @@ export function gphDir(pressureLevel: string) {
   return path.join(repoRoot(), DATA_FOLDER, "gphImages", String(pressureLevel));
 }
 
-export function uvDir() {
-  return path.join(repoRoot(), DATA_FOLDER, "uv_images", "250");
+export function uvDir(pressureLevel: string) {
+  return path.join(repoRoot(), DATA_FOLDER, "uv_images", String(pressureLevel));
 }
 
 export function landMaskPath() {
   return path.join(repoRoot(), DATA_FOLDER, "landMask.png");
+}
+
+export function cloudCoverPath() {
+  return path.join(repoRoot(), DATA_FOLDER, "cloudCover");
 }
 
 export function parseDatehour(value: string): Date {
