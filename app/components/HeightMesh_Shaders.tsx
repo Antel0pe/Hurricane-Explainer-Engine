@@ -7,6 +7,7 @@ import WindUvLayer from "./WindUVLayer";
 import HeightMeshLayer from "./HeightMeshLayer";
 import LandMaskLayer from "./LandMaskLayer";
 import ThreeGlobe from 'three-globe';
+import CloudCoverLayer from "./CloudCoverLayer";
 
 export const min_max_gph_ranges_glsl = `
 uniform float uPressure;
@@ -267,7 +268,7 @@ const UV_POINTS_FRAG = `
   void main(){
     vec2 d = gl_PointCoord - 0.5;
     if(dot(d,d) > 0.25) discard;
-    fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+    fragColor = vec4(0.2, 0.9, 0.9, 1.0);
   }
 `;
 
@@ -509,7 +510,7 @@ void main(){
   vec3 t  = texture(uTrailTex, uv).rgb;
   float I = clamp(max(max(t.r, t.g), t.b), 0.0, 1.0);
   vec3  C = uTint * I;
-  fragColor = vec4(C, I * uOpacity);
+  fragColor = vec4(0.6, 1.0, 1.0, I * uOpacity);
 }
 `;
 
@@ -1182,14 +1183,14 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
 {engineReady && (
   <>
   
-    <LandMaskLayer
+    {/* <LandMaskLayer
   landUrl={`/api/landmask`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
   camera={cameraRef.current}
   // targets={[meshRef.current!, meshRef2.current!, meshRef3.current!]}
   onTexture={handleLandTex}
-/>
+/> */}
 
           {/* <WindUvLayer
         key={`uv-250-${datehour}-${heightTexVersion}`}
@@ -1295,5 +1296,14 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
 /> */}
 </>
 )}
+
+<CloudCoverLayer
+  url={`/api/cloud_cover/${datehour}`}
+  renderer={rendererRef.current}
+  scene={sceneRef.current}
+  camera={cameraRef.current}
+  controls={controlsRef.current}
+/> 
+
     </div>;
 }
