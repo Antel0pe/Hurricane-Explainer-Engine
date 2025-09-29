@@ -46,15 +46,16 @@ vec2 worldToUV(vec3 p){
   return vec2(u, v);
 }
 
-void main(){
+void main() {
   vec2 uv = worldToUV(vWorld);
-  float r = texture(cloudCoverSource, uv).r;
+  float r = texture(cloudCoverSource, uv).r;     // 0..1 coverage
 
-  // hard cutoff (could switch to smoothstep for softer edges)
+  // optional: ignore tiny amounts to avoid haze
   if (r < uThreshold) discard;
 
-  // white cloud with opacity scaled by signal
-  float a = uOpacity;
+  // white with alpha proportional to coverage
+  float a = uOpacity * clamp(r, 0.0, 1.0);
+
   fragColor = vec4(1.0, 1.0, 1.0, a);
 }
 `;
@@ -67,7 +68,7 @@ export default function CloudCoverLayer({
   controls,
   enabled = true,
   opacity = 0.85,
-  threshold = 0.5,
+  threshold = 0.01,
 }: Props) {
   const texRef = useRef<THREE.Texture | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
@@ -113,7 +114,7 @@ export default function CloudCoverLayer({
             uniforms: {
               cloudCoverSource: { value: texture },   
               uOpacity:   { value: opacity },
-              uThreshold: { value: threshold },
+              uThreshold: { value: 0.01 },
               // latLonToXYZ used lon+270° → +0.75; trail used 0.25
               // pick the one that lines up with your globe; try 0.75 first:
               uLonOffset: { value: 0.25 },
@@ -125,6 +126,7 @@ export default function CloudCoverLayer({
 
           const mesh = new THREE.Mesh(geom, mat);
           mesh.frustumCulled = false;
+          mesh.renderOrder = 10;
           scene.add(mesh);
 
           meshRef.current = mesh;
