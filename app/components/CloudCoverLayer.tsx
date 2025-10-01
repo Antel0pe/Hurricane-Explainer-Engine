@@ -46,18 +46,93 @@ vec2 worldToUV(vec3 p){
   return vec2(u, v);
 }
 
+uniform float uRound;   // 0.0..0.5   (fraction of the shorter side to round; try 0.25)
+uniform float uFeather; // 0.0..0.1   (edge softness in cell units; try 0.02)
+
+// choose your tiling resolution in UV (e.g., 256x128 "cells")
+uniform vec2 uCellCount;   // e.g., vec2(256.0, 128.0)
+uniform float uEdge;       // e.g., 0.02 (edge softness in cell units)
+
+// PI helper
+const float PI = 3.141592653589793;
+
+// rounded box SDF: half-size b, corner radius r
+float sdRoundBox(vec2 p, vec2 b, float r){
+  vec2 q = abs(p) - b + vec2(r);
+  return length(max(q, 0.0)) - r + min(max(q.x, q.y), 0.0);
+}
+
+// --- signed distance to axis-aligned box of half-size b (centered at origin)
+float sdBox(vec2 p, vec2 b){
+  vec2 d = abs(p) - b;
+  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+
 void main() {
   vec2 uv = worldToUV(vWorld);
-  float r = texture(cloudCoverSource, uv).r;     // 0..1 coverage
+  float c = texture(cloudCoverSource, uv).r; // desired coverage 0..1
+  if (c <= 0.0) discard;
 
-  // optional: ignore tiny amounts to avoid haze
-  if (r < uThreshold) discard;
+  // map to a discrete cell in equirect space
+  vec2 cellUV = uv * uCellCount;     // e.g., [0..256) x [0..128)
+  vec2 cellId = floor(cellUV);
+  vec2 local  = fract(cellUV);       // [0,1)^2 coords within the cell
 
-  // white with alpha proportional to coverage
-  float a = uOpacity * clamp(r, 0.0, 1.0);
+vec2 center = vec2(0.5); // start centered
 
-  fragColor = vec4(1.0, 1.0, 1.0, a);
+// --- neighbor-aware center bias and stretching ---
+vec2 texel = 1.0 / uCellCount;
+
+// sample coverage at cell centers (discrete neighbors)
+vec2 thisCenterUV = (cellId + 0.5) * texel;
+float cL = texture(cloudCoverSource, thisCenterUV + vec2(-texel.x, 0.0)).r;
+float cR = texture(cloudCoverSource, thisCenterUV + vec2( texel.x, 0.0)).r;
+float cD = texture(cloudCoverSource, thisCenterUV + vec2(0.0, -texel.y)).r;
+float cU = texture(cloudCoverSource, thisCenterUV + vec2(0.0,  texel.y)).r;
+
+// pull toward cloudier sides
+vec2 pull = vec2(cR - cL, cU - cD);         // “gradient” of coverage
+float pullAmt = 1.0;                        // how far we let centers shift
+center += pullAmt * pull;                    // shift within the cell
+center = clamp(center, vec2(0.2), vec2(0.8)); // keep safely inside
+
+// base square area = c  => side length:
+float side = sqrt(clamp(c, 0.0, 1.0));
+
+// stretch toward neighbors so shapes meet
+float stretchAmt = 1.0; // 0..1
+float sx = 1.0 + stretchAmt * max(cL, cR);
+float sy = 1.0 + stretchAmt * max(cD, cU);
+
+// renormalize rectangular area back toward c (pre-rounding)
+float preNorm = inversesqrt(max(sx * sy, 1e-4));
+vec2 halfSize = 0.5 * side * vec2(sx, sy) * preNorm;
+
+// --- ROUNDING + exact-ish area preservation ---
+vec2 size = halfSize * 2.0;                 // w,h of the (pre-round) box
+float r0   = uRound * 0.5 * min(size.x, size.y);  // initial corner radius
+// area of the rounded rect with r0 (before scaling)
+float A0 = size.x * size.y - (4.0 - PI) * r0 * r0;
+float Atarget = clamp(c, 0.0, 1.0);         // target cell area fraction
+
+// scale factor to match area (uniform scale keeps aspect & roundness)
+float s = (A0 > 1e-6) ? sqrt(Atarget / A0) : 1.0;
+
+// apply scale to half-size and radius
+halfSize *= s;
+float r = r0 * s;
+
+// SDF and feathered edge
+float sdf = sdRoundBox(local - center, halfSize, r);
+// inside -> sdf < 0; feather outward by uFeather
+float a   = smoothstep(uFeather, 0.0, sdf);
+
+if (a <= 0.0) discard;
+fragColor = vec4(1.0, 1.0, 1.0, uOpacity * a);
+
 }
+
+
 `;
 
 export default function CloudCoverLayer({
@@ -120,6 +195,10 @@ export default function CloudCoverLayer({
               uLonOffset: { value: 0.25 },
               // Your trail layer uses uFlipV = true; match that if needed:
               uFlipV:     { value: true },
+              uCellCount: { value: new THREE.Vector2(256, 256)}, // e.g., vec2(256.0, 128.0)
+              uEdge: { value: 0.02 },
+              uRound: { value: 0.5 },
+              uFeather: { value: 0.1 }
             }
           });
           mat.toneMapped = false; 

@@ -72,3 +72,5 @@ future ideas:
 - physics nets to make more realistic motion
 - make clouds move with wind
 - day/night cycles
+- use nasa worldview satellite/other satellite images as sources for data?
+    - might be better to pull underlying data if possible rather than satellite
