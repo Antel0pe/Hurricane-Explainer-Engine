@@ -490,9 +490,9 @@ precision highp float;
 in vec3 vWorld; out vec4 fragColor;
 uniform sampler2D uTrailTex;
 uniform float uOpacity;
-uniform vec3  uTint;
 uniform float uLonOffset;  // seam shift; +270° → 0.75
 uniform bool  uFlipV;
+uniform vec3 trailColor;
 
 // world → equirect UV (match your latLonToXYZ that used z = -sin(theta))
 vec2 worldToUV(vec3 p){
@@ -509,8 +509,7 @@ void main(){
   vec2 uv = worldToUV(vWorld);
   vec3 t  = texture(uTrailTex, uv).rgb;
   float I = clamp(max(max(t.r, t.g), t.b), 0.0, 1.0);
-  vec3  C = uTint * I;
-  fragColor = vec4(0.6, 1.0, 1.0, I * uOpacity);
+  fragColor = vec4(trailColor, I * uOpacity);
 }
 `;
 

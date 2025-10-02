@@ -9,7 +9,6 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: NextRequest,
-  context: { params: Promise<{ }> }
 ) {
   const imgPath = path.join(cloudCoverPath(), 'noise', `fbmNoise.png`);
 

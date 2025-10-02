@@ -22,7 +22,8 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "three": "^0.179.1",
-    "three-globe": "^2.44.0"
+    "three-globe": "^2.44.0",
+    "tweakpane": "^4.0.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
