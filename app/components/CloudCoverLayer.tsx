@@ -26,6 +26,9 @@ class CloudPipelineManager {
   private tauLoRT!: THREE.WebGLRenderTarget;  // full-res lo
   private tauHiRT!: THREE.WebGLRenderTarget;  // full-res hi
   private tauTileRT!: THREE.WebGLRenderTarget;// tile-res packed (tau,lo,hi,_)
+  private tauBlurH!: THREE.WebGLRenderTarget;
+private tauBlurV!: THREE.WebGLRenderTarget;
+
 
   // Fullscreen quad scene
   private quad!: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
@@ -61,6 +64,13 @@ class CloudPipelineManager {
     this.tauRT    = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
     this.tauLoRT  = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
     this.tauHiRT  = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+    this.tauBlurH = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+    this.tauBlurV = new THREE.WebGLRenderTarget(this.w, this.h, {
+      ...rNoMip,
+      generateMipmaps: true,                    // allow LOD sampling if desired
+      minFilter: THREE.LinearMipmapLinearFilter
+    } as THREE.RenderTargetOptions);
+
 
     const tilesX = Math.ceil(this.w / this.tile);
     const tilesY = Math.ceil(this.h / this.tile);
@@ -179,6 +189,9 @@ class CloudPipelineManager {
       .forEach(rt => rt.dispose());
     this.quad.geometry.dispose();
     this.quad.material.dispose();
+    [this.covBlurH, this.covBlurV, this.maskRT, this.tauRT, this.tauLoRT, this.tauHiRT, this.tauTileRT, this.tauBlurH, this.tauBlurV]
+  .forEach(rt => rt.dispose());
+
   }
 
   private draw(mat: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget, viewport?: {w:number,h:number}) {
@@ -257,8 +270,17 @@ class CloudPipelineManager {
       this.draw(this.upsampleMat, this.tauLoRT);
       this.draw(this.upsampleMat, this.tauHiRT);
     }
+    // --- τ blur for Option E ---
+this.blurHMat.uniforms.uSrc.value = this.tauRT.texture;
+this.draw(this.blurHMat, this.tauBlurH);
 
-    return { covBlur: this.covBlurV.texture, tau: this.tauRT.texture };
+this.blurVMat.uniforms.uSrc.value = this.tauBlurH.texture;
+this.draw(this.blurVMat, this.tauBlurV);
+this.tauBlurV.texture.generateMipmaps = true;
+
+return { covBlur: this.covBlurV.texture, tau: this.tauRT.texture, tauBlur: this.tauBlurV.texture };
+
+
   }
 }
 
@@ -283,6 +305,10 @@ uniform float uOpacity;
 uniform float uEps;        // feather width in look-space
 uniform float uLonOffset;
 uniform bool  uFlipV;
+uniform sampler2D uTauBlur; // blurred tau
+uniform bool  uUseTauBlur;  // toggle
+uniform float uK;           // reuse blend factor
+
 
 vec2 worldToUV(vec3 p){
   vec3 n = normalize(p);
@@ -301,8 +327,19 @@ void main(){
   float C = texture(uCov,  uv).r;
 
   // Feathered binary (keeps edges soft)
-  float mask = smoothstep(T - uEps, T + uEps, L);
-  float alpha = mask * C;
+  // float mask = smoothstep(T - uEps, T + uEps, L);
+  // float alpha = 1.0 * C;
+
+    // Option C: coverage floor blend
+  // float mask = smoothstep(T - uEps, T + uEps, L);
+  // float alpha = mix(C, mask * C, uK); // (1-k)*C + k*(mask*C)
+
+    // Option E: soft + floor + blurred tau
+  float T_used = uUseTauBlur ? texture(uTauBlur, uv).r : T;
+  float mask   = smoothstep(T_used - uEps, T_used + uEps, L);
+  float alpha  = mix(C, mask * C, uK);
+
+
 
   if (alpha <= 0.001) discard;
   fragColor = vec4(vec3(alpha), alpha * uOpacity);
@@ -392,7 +429,7 @@ export default function CloudCoverLayer({
       if (!pipelineRef.current || !covRawRef.current || !lookTexRef.current) return;
 
       // ---- Run full pipeline (blur + per-tile threshold iterations) ----
-      const { covBlur, tau } = pipelineRef.current.runOnce({
+      const { covBlur, tau, tauBlur } = pipelineRef.current.runOnce({
         covRawTex: covRawRef.current,
         lookTex:   lookTexRef.current,
         iterations
@@ -418,7 +455,11 @@ export default function CloudCoverLayer({
             uOpacity:{ value: opacity },
             uEps:    { value: feather },
             uLonOffset: { value: 0.25 },
-            uFlipV:     { value: true }
+            uFlipV:     { value: true },
+uTauBlur: { value: tauBlur },     // blurred tau (Option E)
+uUseTauBlur: { value: true },     // toggle for Option E
+uK: { value: 0.7 },               // keep the floor blend from Option C
+
           }
         });
         mat.toneMapped = false;
@@ -433,6 +474,10 @@ export default function CloudCoverLayer({
         mat.uniforms.uLook.value = lookTexRef.current;
         mat.uniforms.uTau.value  = tau;
         mat.uniforms.uCov.value  = covBlur;
+        mat.uniforms.uTau.value     = tau;
+mat.uniforms.uCov.value     = covBlur;
+mat.uniforms.uTauBlur.value = tauBlur;
+
       }
 
       renderer!.render(scene!, camera!);
