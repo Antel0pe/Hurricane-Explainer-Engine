@@ -80,7 +80,7 @@ export default function WindUvLayer({
 
     // right after: if (!renderer || !scene || !camera || !url) return;
 
-    let paneHubDisposeCleanup: Array<() => void> = [];
+    const paneHubDisposeCleanup: Array<() => void> = [];
 
     loader.load(
       url,
@@ -526,10 +526,10 @@ export default function WindUvLayer({
 
     return () => {
       disposed = true;
-      for (let d of paneHubDisposeCleanup){
+      for (const d of paneHubDisposeCleanup){
         if (d) d();
       }
-      
+
       if (apiRef.current && typeof onRemove === "function") {
         try {
           onRemove(apiRef.current);

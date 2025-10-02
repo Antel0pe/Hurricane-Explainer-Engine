@@ -276,15 +276,22 @@ class PaneHubClass {
             ? u.value as THREE.Vector3
             : new THREE.Vector3(spec.value?.x ?? 0, spec.value?.y ?? 0, spec.value?.z ?? 0);
 
-          const obj = { [label]: { x: v3.x, y: v3.y, z: v3.z } } as Record<string, any>;
-
+          const obj: Record<string, { x: number; y: number; z: number; }> = {
+            [label]: { x: v3.x, y: v3.y, z: v3.z },
+          };
           const ctrl = folder.addBinding(obj, label, {
             picker: "inline",
             expanded: true,
             x: { min: spec.min, max: spec.max, step: spec.step },
             y: { min: spec.min, max: spec.max, step: spec.step },
             z: { min: spec.min, max: spec.max, step: spec.step },
-          } as any);
+          } as {
+            picker: "inline";
+            expanded: boolean;
+            x: { min?: number; max?: number; step?: number };
+            y: { min?: number; max?: number; step?: number };
+            z: { min?: number; max?: number; step?: number };
+          });
 
           ctrl.on("change", (ev: { value: { x: number; y: number; z: number } }) => {
             v3.set(ev.value.x, ev.value.y, ev.value.z);
