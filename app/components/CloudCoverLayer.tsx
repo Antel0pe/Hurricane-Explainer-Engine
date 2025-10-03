@@ -7,6 +7,14 @@ import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js
 // Swap this to your endpoint (PNG of the global fBm look field, R in [0..1])
 const FBM_NOISE_API = "/api/cloud_cover/noise";
 
+function colorChannelFromPressure(p: number): 0|1|2 {
+  if (p === 850) return 0; // R
+  if (p === 500) return 2; // B
+  if (p === 250) return 1; // G
+  return 0;                // default to R
+}
+
+
 // -------------------------- Small in-file pipeline manager --------------------------
 class CloudPipelineManager {
   constructor(
@@ -28,6 +36,9 @@ class CloudPipelineManager {
   private tauTileRT!: THREE.WebGLRenderTarget;// tile-res packed (tau,lo,hi,_)
   private tauBlurH!: THREE.WebGLRenderTarget;
 private tauBlurV!: THREE.WebGLRenderTarget;
+private singleRedChannelForPressureLevelTarget!: THREE.WebGLRenderTarget; // single-channel (R) selected from RGB
+private copyPressureLevelChannelToRed!: THREE.ShaderMaterial;   // copies chosen channel -> R
+
 
 
   // Fullscreen quad scene
@@ -70,6 +81,27 @@ private tauBlurV!: THREE.WebGLRenderTarget;
       generateMipmaps: true,                    // allow LOD sampling if desired
       minFilter: THREE.LinearMipmapLinearFilter
     } as THREE.RenderTargetOptions);
+this.singleRedChannelForPressureLevelTarget = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+
+// Swizzle shader: pick uChan = 0 (R), 1 (G), 2 (B)
+this.copyPressureLevelChannelToRed = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  vertexShader: `
+    out vec2 vUv;
+    void main(){ vUv = 0.5*(position.xy+1.0); gl_Position = vec4(position,1.0); }
+  `,
+  fragmentShader: `
+    precision highp float; in vec2 vUv; out vec4 fragColor;
+    uniform sampler2D uSrc;
+    uniform int uChan;
+    void main(){
+      vec3 c = texture(uSrc, vUv).rgb;
+      float v = (uChan == 0) ? c.r : ((uChan == 1) ? c.g : c.b);
+      fragColor = vec4(v, 0.0, 0.0, 1.0); // write selected channel into .r
+    }
+  `,
+  uniforms: { uSrc: { value: null }, uChan: { value: 0 } }
+});
 
 
     const tilesX = Math.ceil(this.w / this.tile);
@@ -191,6 +223,9 @@ private tauBlurV!: THREE.WebGLRenderTarget;
     this.quad.material.dispose();
     [this.covBlurH, this.covBlurV, this.maskRT, this.tauRT, this.tauLoRT, this.tauHiRT, this.tauTileRT, this.tauBlurH, this.tauBlurV]
   .forEach(rt => rt.dispose());
+  this.singleRedChannelForPressureLevelTarget.dispose();
+this.copyPressureLevelChannelToRed.dispose();
+
 
   }
 
@@ -219,8 +254,9 @@ private tauBlurV!: THREE.WebGLRenderTarget;
     covRawTex: THREE.Texture;    // ERA5 red channel texture (R in [0..1])
     lookTex:   THREE.Texture;    // fBm look texture (R in [0..1])
     iterations?: number;         // 8..12 typical
+    colorChannel?: 0 | 1 | 2;   // 0=R, 1=G, 2=B  
   }) {
-    const { covRawTex, lookTex, iterations = 10 } = params;
+    const { covRawTex, lookTex, iterations = 10, colorChannel = 0 } = params;
 
     // Init τ/lo/hi (0.5/0/1) in one small helper
     const initMat = new THREE.ShaderMaterial({
@@ -230,8 +266,13 @@ private tauBlurV!: THREE.WebGLRenderTarget;
       uniforms: { uInit: { value: new THREE.Vector3() } }
     });
 
+    // 0) Swizzle desired RGB -> R (so downstream shaders keep reading .r)
+    this.copyPressureLevelChannelToRed.uniforms.uSrc.value  = covRawTex;
+    this.copyPressureLevelChannelToRed.uniforms.uChan.value = colorChannel;
+    this.draw(this.copyPressureLevelChannelToRed, this.singleRedChannelForPressureLevelTarget);
+
     // 1) Blur coverage H→V into covBlurV (mips enabled)
-    this.blurHMat.uniforms.uSrc.value = covRawTex;
+    this.blurHMat.uniforms.uSrc.value = this.singleRedChannelForPressureLevelTarget.texture;
     this.draw(this.blurHMat, this.covBlurH);
 
     this.blurVMat.uniforms.uSrc.value = this.covBlurH.texture;
@@ -359,6 +400,7 @@ type Props = {
   eraSize?: { w: number; h: number };        // defaults 1440x721
   tilePx?: number;                           // per-tile solver size (e.g., 32)
   iterations?: number;                       // threshold iterations (e.g., 10)
+  pressureLevel: number;
 };
 
 export default function CloudCoverLayer({
@@ -366,6 +408,7 @@ export default function CloudCoverLayer({
   renderer,
   scene,
   camera,
+  pressureLevel,
   enabled = true,
   opacity = 0.85,
   feather = 0.02,
@@ -377,7 +420,7 @@ export default function CloudCoverLayer({
   const matRef  = useRef<THREE.ShaderMaterial | null>(null);
   const pipelineRef = useRef<CloudPipelineManager | null>(null);
   const lookTexRef  = useRef<THREE.Texture | null>(null);
-  const covRawRef   = useRef<THREE.Texture | null>(null);
+  const era5CoverageRawRef   = useRef<THREE.Texture | null>(null);
 
   useEffect(() => {
     if (!enabled || !renderer || !scene || !camera) return;
@@ -400,7 +443,7 @@ export default function CloudCoverLayer({
         t.minFilter = THREE.LinearFilter;
         t.magFilter = THREE.LinearFilter;
         t.colorSpace = THREE.NoColorSpace;
-        covRawRef.current = t;
+        era5CoverageRawRef.current = t;
         tryRunPipelineAndAttach();
       },
       undefined,
@@ -426,13 +469,14 @@ export default function CloudCoverLayer({
     );
 
     function tryRunPipelineAndAttach() {
-      if (!pipelineRef.current || !covRawRef.current || !lookTexRef.current) return;
-
+      if (!pipelineRef.current || !era5CoverageRawRef.current || !lookTexRef.current) return;
+      const colorChannel = colorChannelFromPressure(pressureLevel);
       // ---- Run full pipeline (blur + per-tile threshold iterations) ----
       const { covBlur, tau, tauBlur } = pipelineRef.current.runOnce({
-        covRawTex: covRawRef.current,
+        covRawTex: era5CoverageRawRef.current,
         lookTex:   lookTexRef.current,
-        iterations
+        iterations,
+        colorChannel: colorChannel
       });
 
       // ---- Build/refresh the visible cloud mesh ----
@@ -491,7 +535,7 @@ mat.uniforms.uTauBlur.value = tauBlur;
       (meshRef.current?.material as THREE.ShaderMaterial | undefined)?.dispose?.();
       meshRef.current = null;
       matRef.current  = null;
-      covRawRef.current?.dispose();  covRawRef.current  = null;
+      era5CoverageRawRef.current?.dispose();  era5CoverageRawRef.current  = null;
       lookTexRef.current?.dispose(); lookTexRef.current = null;
     };
   }, [enabled, url, renderer, scene, camera, opacity, feather, eraSize.w, eraSize.h, tilePx, iterations]);

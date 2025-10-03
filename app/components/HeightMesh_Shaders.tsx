@@ -8,6 +8,10 @@ import HeightMeshLayer from "./HeightMeshLayer";
 import LandMaskLayer from "./LandMaskLayer";
 import ThreeGlobe from 'three-globe';
 import CloudCoverLayer from "./CloudCoverLayer";
+import { Features } from "./tweaks/FeatureBus";
+import { FEAT } from "./tweaks/Features";
+import { PaneHub } from "./tweaks/PaneHub";
+import { useFeatureFlag } from "./tweaks/FeatureBusHook";
 
 export const min_max_gph_ranges_glsl = `
 uniform float uPressure;
@@ -1151,6 +1155,35 @@ renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
   // setLandTexVersion(v => v + 1);
 }, []);
 
+useEffect(() => {
+  if (!engineReady) return;
+  const disposers: Array<() => void> = [];
+
+// PaneHub registration
+disposers.push(
+  // Clouds
+  PaneHub.bindFlag("Cloud Layers", "250 hPa", FEAT.CLOUD_250, false),
+  PaneHub.bindFlag("Cloud Layers", "500 hPa", FEAT.CLOUD_500, false),
+  PaneHub.bindFlag("Cloud Layers", "850 hPa", FEAT.CLOUD_850, false),
+
+  // Geopotential Height Mesh
+  PaneHub.bindFlag("Geopotential Height Mesh", "250 hPa", FEAT.GPH_250, false),
+  PaneHub.bindFlag("Geopotential Height Mesh", "500 hPa", FEAT.GPH_500, false),
+  PaneHub.bindFlag("Geopotential Height Mesh", "850 hPa", FEAT.GPH_850, false),
+
+  // Wind Particles
+  PaneHub.bindFlag("Wind Particles", "250 hPa", FEAT.WIND_250, false),
+  PaneHub.bindFlag("Wind Particles", "500 hPa", FEAT.WIND_500, false),
+  PaneHub.bindFlag("Wind Particles", "850 hPa", FEAT.WIND_850, false),
+
+    PaneHub.bindFlag("Base Layers", "Land Mask", FEAT.LAND_MASK, false),
+);
+
+
+  return () => disposers.forEach((d) => d());
+}, [engineReady]);
+
+
 const handleGph250 = useCallback((tex: THREE.Texture) => {
   heightTexRef.current = tex;
   setHeightTexVersion(v => v + 1);
@@ -1175,23 +1208,36 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   windLayersSetRef.current.delete(api);
 }, []);
 
+// Feature flag hooks
+const cloud250On = useFeatureFlag<boolean>(FEAT.CLOUD_250, false);
+const cloud500On = useFeatureFlag<boolean>(FEAT.CLOUD_500, false);
+const cloud850On = useFeatureFlag<boolean>(FEAT.CLOUD_850, false);
 
+const gph250On = useFeatureFlag<boolean>(FEAT.GPH_250, false);
+const gph500On = useFeatureFlag<boolean>(FEAT.GPH_500, false);
+const gph850On = useFeatureFlag<boolean>(FEAT.GPH_850, false);
+
+const wind250On = useFeatureFlag<boolean>(FEAT.WIND_250, false);
+const wind500On = useFeatureFlag<boolean>(FEAT.WIND_500, false);
+const wind850On = useFeatureFlag<boolean>(FEAT.WIND_850, false);
+
+  const landMaskOn = useFeatureFlag<boolean>(FEAT.LAND_MASK, false);
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
 {engineReady && (
   <>
   
-    {/* <LandMaskLayer
+{landMaskOn && (    <LandMaskLayer
   landUrl={`/api/landmask`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
   camera={cameraRef.current}
   // targets={[meshRef.current!, meshRef2.current!, meshRef3.current!]}
   onTexture={handleLandTex}
-/> */}
+/>)}
 
-          {/* <WindUvLayer
+          {wind250On && (<WindUvLayer
         key={`uv-250-${datehour}-${heightTexVersion}`}
         url={`/api/uv/250/${datehour}`}
         renderer={rendererRef.current}
@@ -1206,10 +1252,10 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
         SIM_FRAG={SIM_FRAG}
   onReady={handleWindReady}
   onRemove={handleWindRemove}
-        zOffset={0}
-        /> */}
+        // zOffset={0}
+        /> )}
 
-          {/* <WindUvLayer
+          {wind500On && (<WindUvLayer
         key={`uv-500-${datehour}-${heightTexVersion2}`}
         url={`/api/uv/500/${datehour}`}
         renderer={rendererRef.current}
@@ -1224,10 +1270,10 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
         SIM_FRAG={SIM_FRAG}
   onReady={handleWindReady}
   onRemove={handleWindRemove}
-        zOffset={0.5}
-        /> */}
+        // zOffset={0.5}
+        />)}
 
-            <WindUvLayer
+            {wind850On && (<WindUvLayer
         key={`uv-850-${datehour}-${heightTexVersion3}`}
         url={`/api/uv/850/${datehour}`}
         renderer={rendererRef.current}
@@ -1242,11 +1288,12 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
         SIM_FRAG={SIM_FRAG}
   onReady={handleWindReady}
   onRemove={handleWindRemove}
-        zOffset={1.0}
-        />
+        // zOffset={1.0}
+        />)}
 
 
-      {/* <HeightMeshLayer
+      {gph250On && (<HeightMeshLayer
+      key={"gph-250"}
   url={`/api/gph/250/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -1260,9 +1307,10 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={0}
   onTextureChange={handleGph250}
-/> */}
+/>)}
 
-      {/* <HeightMeshLayer
+     {gph500On && ( <HeightMeshLayer
+     key={"gph-500"}
   url={`/api/gph/500/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -1276,9 +1324,10 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={0.5}
   onTextureChange={handleGph500}
-/> */}
+/>)}
 
-    {/* <HeightMeshLayer
+   {gph850On && ( <HeightMeshLayer
+   key={"gph-850"}
   url={`/api/gph/850/${datehour}`}
   renderer={rendererRef.current}
   scene={sceneRef.current}
@@ -1292,17 +1341,45 @@ const handleWindRemove = useCallback((api: WindLayerAPI) => {
   exaggeration={exaggeration}
   zOffset={1}
   onTextureChange={handleGph850}
-/> */}
+/>)}
 </>
 )}
 
-<CloudCoverLayer
-  url={`/api/cloud_cover/${datehour}`}
-  renderer={rendererRef.current}
-  scene={sceneRef.current}
-  camera={cameraRef.current}
-  controls={controlsRef.current}
-/> 
+        {cloud250On && (
+          <CloudCoverLayer
+            key={`cloud-250-${datehour}`}
+            url={`/api/cloud_cover/${datehour}`}
+            renderer={rendererRef.current}
+            scene={sceneRef.current}
+            camera={cameraRef.current}
+            controls={controlsRef.current}
+            pressureLevel={250}     // if your component accepts it
+          />
+        )}
+
+        {cloud500On && (
+          <CloudCoverLayer
+            key={`cloud-500-${datehour}`}
+            url={`/api/cloud_cover/${datehour}`}
+            renderer={rendererRef.current}
+            scene={sceneRef.current}
+            camera={cameraRef.current}
+            controls={controlsRef.current}
+            pressureLevel={500}     // if your component accepts it
+          />
+        )}
+
+        {cloud850On && (
+          <CloudCoverLayer
+            key={`cloud-850-${datehour}`}
+            url={`/api/cloud_cover/${datehour}`}
+            renderer={rendererRef.current}
+            scene={sceneRef.current}
+            camera={cameraRef.current}
+            controls={controlsRef.current}
+            pressureLevel={850}     // if your component accepts it
+          />
+        )}
 
     </div>;
 }

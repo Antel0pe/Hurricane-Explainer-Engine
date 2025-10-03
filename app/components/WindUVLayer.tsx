@@ -16,6 +16,7 @@ import {
   WindLayerAPI,
 } from "./HeightMesh_Shaders";
 import { PaneHub } from "./tweaks/PaneHub";
+import { defaultZOffsetForPressure } from "../utils/zLayout";
 
 type Props = {
   url: string;
@@ -32,7 +33,7 @@ type Props = {
   SIM_FRAG: string;
   onReady?: (api: WindLayerAPI) => void;
   onRemove?: (api: WindLayerAPI) => void;
-  zOffset?: number;
+  // zOffset?: number;
 };
 
 export default function WindUvLayer({
@@ -49,7 +50,7 @@ export default function WindUvLayer({
   SIM_FRAG,
   onReady,
   onRemove,
-  zOffset,
+  // zOffset,
 }: Props) {
   // --- per-layer refs (do NOT share across layers)
   const uvPointsRef = useRef<THREE.Points | null>(null);
@@ -186,9 +187,44 @@ export default function WindUvLayer({
               uCurrentPosition: { value: rtRead.texture },
               uSimSize: { value: new THREE.Vector2(outW, outH) },
               uPressure: { value: pressureLevel },
-              zOffset: { value: zOffset },
+              zOffset: { value: defaultZOffsetForPressure(pressureLevel) },
             },
           });
+
+          paneHubDisposeCleanup.push( PaneHub.bind(
+  `UV Points (${pressureLevel} hPa)`, // folder name is unique per pressure
+  {
+    Exaggeration: {
+      type: "number",
+      uniform: "uExaggeration",
+      min: 0,
+      max: 5,
+      step: 0.01,
+    },
+    PointSize: {
+      type: "number",
+      uniform: "uPointSize",
+      min: 0.1,
+      max: 20,
+      step: 0.1,
+    },
+    AboveTerrain: {
+      type: "number",
+      uniform: "uAboveTerrain",
+      min: -2,
+      max: 2,
+      step: 0.01,
+    },
+    Z_Offset: {
+      type: "number",
+      uniform: "zOffset",
+      min: -2,
+      max: 2,
+      step: 0.01,
+    },
+  },
+  mat
+));
 
           const makeTrailRT = (w: number, h: number) =>
             new THREE.WebGLRenderTarget(w, h, {
@@ -312,7 +348,7 @@ export default function WindUvLayer({
               uCurrentPosition: { value: readPositionRTRef.current!.texture },
               uSimSize: { value: new THREE.Vector2(outW, outH) },
               uPressure: { value: pressureLevel },
-              zOffset: { value: zOffset },
+              // zOffset: { value: zOffset },
             },
           });
 
@@ -462,7 +498,7 @@ export default function WindUvLayer({
           mat.uniforms.uGridH.value = texH;
           mat.uniforms.uStep.value = 10;
           mat.uniforms.uAboveTerrain.value = 0.01;
-          mat.uniforms.zOffset.value = zOffset;
+          mat.uniforms.zOffset.value = defaultZOffsetForPressure(pressureLevel);
 
           if (dimsChanged) {
             const outW = Math.ceil(texW / 10);
