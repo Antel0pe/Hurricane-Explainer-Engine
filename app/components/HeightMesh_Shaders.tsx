@@ -1156,6 +1156,16 @@ renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
 }, []);
 
 useEffect(() => {
+  // Seed only missing keys (does not overwrite user/persisted choices)
+  Features.seed({
+    [FEAT.CLOUD_850]: true,
+    [FEAT.WIND_850]:  true,
+    // add any other first-load “on” defaults here
+    // [FEAT.GPH_500]: true,
+  });
+}, []);
+
+useEffect(() => {
   if (!engineReady) return;
   const disposers: Array<() => void> = [];
 

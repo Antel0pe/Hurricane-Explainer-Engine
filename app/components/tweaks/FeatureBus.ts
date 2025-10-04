@@ -17,6 +17,15 @@ class FeatureBus {
     const s = this.subs.get(key);
     if (s) s.forEach((fn) => fn(value));
   }
+    /** Set only if no value is present */
+  setDefault<T>(key: FeatureKey, value: T) {
+    if (!this.map.has(key)) this.set<T>(key, value);
+  }
+
+  /** Seed multiple defaults at once (only fills missing keys) */
+  seed(defaults: Record<FeatureKey, unknown>) {
+    for (const [k, v] of Object.entries(defaults)) this.setDefault(k, v);
+  }
 
   subscribe<T = unknown>(key: FeatureKey, fn: (v: T) => void): () => void {
     let s = this.subs.get(key);
