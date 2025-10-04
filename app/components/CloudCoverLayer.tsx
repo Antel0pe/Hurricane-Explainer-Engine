@@ -3,6 +3,7 @@
 import * as THREE from "three";
 import { useEffect, useRef } from "react";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { PaneHub } from "./tweaks/PaneHub";
 
 // Swap this to your endpoint (PNG of the global fBm look field, R in [0..1])
 const FBM_NOISE_API = "/api/cloud_cover/noise";
@@ -270,14 +271,15 @@ this.copyPressureLevelChannelToRed.dispose();
     this.copyPressureLevelChannelToRed.uniforms.uSrc.value  = covRawTex;
     this.copyPressureLevelChannelToRed.uniforms.uChan.value = colorChannel;
     this.draw(this.copyPressureLevelChannelToRed, this.singleRedChannelForPressureLevelTarget);
+    this.singleRedChannelForPressureLevelTarget.texture.generateMipmaps = true;
 
     // 1) Blur coverage H→V into covBlurV (mips enabled)
-    this.blurHMat.uniforms.uSrc.value = this.singleRedChannelForPressureLevelTarget.texture;
-    this.draw(this.blurHMat, this.covBlurH);
+    // this.blurHMat.uniforms.uSrc.value = this.singleRedChannelForPressureLevelTarget.texture;
+    // this.draw(this.blurHMat, this.covBlurH);
 
-    this.blurVMat.uniforms.uSrc.value = this.covBlurH.texture;
-    this.draw(this.blurVMat, this.covBlurV);
-    this.covBlurV.texture.generateMipmaps = true;
+    // this.blurVMat.uniforms.uSrc.value = this.covBlurH.texture;
+    // this.draw(this.blurVMat, this.covBlurV);
+    // this.covBlurV.texture.generateMipmaps = true;
 
     // 2) Init τ fields
     initMat.uniforms.uInit.value.set(0.5, 0.0, 0.0); this.draw(initMat, this.tauRT);
@@ -301,7 +303,7 @@ this.copyPressureLevelChannelToRed.dispose();
       this.updateMat.uniforms.uTauLo.value = this.tauLoRT.texture;
       this.updateMat.uniforms.uTauHi.value = this.tauHiRT.texture;
       this.updateMat.uniforms.uMask.value  = this.maskRT.texture;
-      this.updateMat.uniforms.uCov.value   = this.covBlurV.texture;
+      this.updateMat.uniforms.uCov.value   = this.singleRedChannelForPressureLevelTarget.texture;
 
       this.draw(this.updateMat, this.tauTileRT, { w: this.tauTileRT.width, h: this.tauTileRT.height });
 
@@ -326,18 +328,99 @@ return { covBlur: this.covBlurV.texture, tau: this.tauRT.texture, tauBlur: this.
 }
 
 // ------------------------------- Display shaders -------------------------------
-const CLOUD_VERT = /* glsl */`
+// 1) NEW vertex shader (replace CLOUD_VERT with this)
+const CLOUD_SHELL_VERT = /* glsl */`
 out vec3 vWorld;
-void main(){
-  vec4 wp = modelMatrix * vec4(position, 1.0);
+flat out int vShell; 
+
+uniform float uBaseR;      // base radius of the cloud shell (meters in your world units)
+uniform float uDz;         // radial spacing between shells (same units as uBaseR)
+uniform int   uShellCount; // just for reference if you want to fade by layer
+
+void main() {
+  // Use instancing to push each sphere outward along its normal.
+  // gl_InstanceID is 0..(uShellCount-1)
+  float idx = float(gl_InstanceID);
+
+  // direction from sphere center (ignore original radius; use our own uBaseR)
+  vec3 dir = normalize(position);
+
+  // displace radially by idx * uDz
+  vec3 shellPos = dir * (uBaseR + idx * uDz);
+
+  vec4 wp = modelMatrix * vec4(shellPos, 1.0);
   vWorld = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
+
+  vShell = gl_InstanceID;
 }
 `;
 
+// // Final lightweight compose: feathered mask × coverage
+// const CLOUD_FRAG = /* glsl */`
+// precision highp float;
+// flat in int vShell;
+// in vec3 vWorld; out vec4 fragColor;
+// uniform sampler2D uLook;   // fBm look tex
+// uniform sampler2D uTau;    // solved thresholds
+// uniform sampler2D uCov;    // blurred coverage
+// uniform float uOpacity;
+// uniform float uEps;        // feather width in look-space
+// uniform float uLonOffset;
+// uniform bool  uFlipV;
+// uniform sampler2D uTauBlur; // blurred tau
+// uniform bool  uUseTauBlur;  // toggle
+// uniform float uK;           // reuse blend factor
+
+
+// vec2 worldToUV(vec3 p){
+//   vec3 n = normalize(p);
+//   float lat = asin(clamp(n.y, -1.0, 1.0));
+//   float lon = atan(-n.z, n.x);
+//   float u = fract(lon / (2.0*3.141592653589793) + 0.5 + uLonOffset);
+//   float v = 0.5 - lat / 3.141592653589793;
+//   if (uFlipV) v = 1.0 - v;
+//   return vec2(u, v);
+// }
+
+// void main(){
+//   vec2 uv = worldToUV(vWorld);
+//   float offs = 0.0015 * float(vShell);
+// uv += vec2(
+//     sin(123.45*float(vShell)) * offs,
+//     cos(456.78*float(vShell)) * offs
+// );
+//   float L = texture(uLook, uv).r;
+//   float T = texture(uTau,  uv).r;
+//   float C = texture(uCov,  uv).r;
+
+//   // Feathered binary (keeps edges soft)
+//   // float mask = smoothstep(T - uEps, T + uEps, L);
+//   // float alpha = 1.0 * C;
+
+//     // Option C: coverage floor blend
+//   // float mask = smoothstep(T - uEps, T + uEps, L);
+//   // float alpha = mix(C, mask * C, uK); // (1-k)*C + k*(mask*C)
+
+//     // Option E: soft + floor + blurred tau
+//   float T_used = uUseTauBlur ? texture(uTauBlur, uv).r : T;
+//   T_used += 0.02 * float(vShell); 
+//   float mask   = smoothstep(T_used - uEps, T_used + uEps, L);
+//   float alpha  = mix(C, mask * C, uK);
+//   // float facing = abs(dot(normalize(vWorld), normalize(cameraPosition - vWorld)));
+// // alpha *= smoothstep(0.2, 0.5, facing);
+
+
+
+
+//   if (alpha <= 0.001) discard;
+//   fragColor = vec4(vec3(alpha), alpha * uOpacity);
+// }
+// `;
 // Final lightweight compose: feathered mask × coverage
 const CLOUD_FRAG = /* glsl */`
 precision highp float;
+flat in int vShell;
 in vec3 vWorld; out vec4 fragColor;
 uniform sampler2D uLook;   // fBm look tex
 uniform sampler2D uTau;    // solved thresholds
@@ -349,7 +432,15 @@ uniform bool  uFlipV;
 uniform sampler2D uTauBlur; // blurred tau
 uniform bool  uUseTauBlur;  // toggle
 uniform float uK;           // reuse blend factor
+uniform int   uShellCount;
+uniform float uLayerFalloff;     // 0..1, how fast outer shells fade (try 0.6)
+uniform float uDensityJitterAmp; // 0..0.5, multiplicative noise on alpha (try 0.15)
+uniform float uFeatherJitterAmp; // 0..0.02, extra eps per shell (try 0.003)
 
+// tiny, cheap hash → [0,1)
+float hash31(vec3 p){
+  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
 
 vec2 worldToUV(vec3 p){
   vec3 n = normalize(p);
@@ -360,32 +451,48 @@ vec2 worldToUV(vec3 p){
   if (uFlipV) v = 1.0 - v;
   return vec2(u, v);
 }
-
 void main(){
   vec2 uv = worldToUV(vWorld);
+
+  // already added earlier:
+  float offs = 0.0015 * float(vShell);
+  uv += vec2(
+    sin(123.45*float(vShell)) * offs,
+    cos(456.78*float(vShell)) * offs
+  );
+
   float L = texture(uLook, uv).r;
   float T = texture(uTau,  uv).r;
   float C = texture(uCov,  uv).r;
 
-  // Feathered binary (keeps edges soft)
-  // float mask = smoothstep(T - uEps, T + uEps, L);
-  // float alpha = 1.0 * C;
+  // slightly different feather per shell
+  float epsShell = uEps + uFeatherJitterAmp * float(vShell);
 
-    // Option C: coverage floor blend
-  // float mask = smoothstep(T - uEps, T + uEps, L);
-  // float alpha = mix(C, mask * C, uK); // (1-k)*C + k*(mask*C)
-
-    // Option E: soft + floor + blurred tau
   float T_used = uUseTauBlur ? texture(uTauBlur, uv).r : T;
-  float mask   = smoothstep(T_used - uEps, T_used + uEps, L);
-  float alpha  = mix(C, mask * C, uK);
+  T_used += 0.02 * float(vShell);      // small threshold bias from earlier
+  float mask = smoothstep(T_used - epsShell, T_used + epsShell, L);
 
+  // base alpha (Option C/E mix)
+  float alpha = mix(C, mask * C, uK);
 
+  // ---- NEW: per-shell density shaping ----
+  // 1) outer shells contribute less (Beer–Lambert-ish falloff)
+  float shellN = float(uShellCount > 1 ? uShellCount - 1 : 1);
+  float t = float(vShell) / shellN;             // 0 (inner) → 1 (outer)
+  float falloff = mix(1.0, 1.0 - uLayerFalloff, t);
+
+  // 2) multiplicative tiny jitter so stacks aren’t uniform
+  float jitter = mix(1.0 - uDensityJitterAmp,
+                     1.0 + uDensityJitterAmp,
+                     hash31(vec3(uv * 1024.0, float(vShell)*13.0)));
+
+  alpha *= falloff * jitter;
 
   if (alpha <= 0.001) discard;
-  fragColor = vec4(vec3(alpha), alpha * uOpacity);
+  fragColor = vec4(vec3(alpha), alpha);
 }
 `;
+
 
 // -------------------------------- React component --------------------------------
 type Props = {
@@ -425,6 +532,7 @@ export default function CloudCoverLayer({
   useEffect(() => {
     if (!enabled || !renderer || !scene || !camera) return;
     let disposed = false;
+    const paneHubDisposeCleanup: Array<() => void> = [];
 
     // Create/refresh pipeline if dims/renderer changed
     pipelineRef.current?.dispose();
@@ -480,55 +588,134 @@ export default function CloudCoverLayer({
       });
 
       // ---- Build/refresh the visible cloud mesh ----
-      const globeRadius = 100;
-      const overlayR = globeRadius + 0.25;
-      if (!meshRef.current) {
-        const geom = new THREE.SphereGeometry(overlayR, 256, 128);
-        const mat = new THREE.ShaderMaterial({
-          glslVersion: THREE.GLSL3,
-          vertexShader:   CLOUD_VERT,
-          fragmentShader: CLOUD_FRAG,
-          transparent: true,
-          depthWrite: false,
-          depthTest: true,
-          blending: THREE.NormalBlending,
-          uniforms: {
-            uLook:   { value: lookTexRef.current },
-            uTau:    { value: tau },
-            uCov:    { value: covBlur },
-            uOpacity:{ value: opacity },
-            uEps:    { value: feather },
-            uLonOffset: { value: 0.25 },
-            uFlipV:     { value: true },
-uTauBlur: { value: tauBlur },     // blurred tau (Option E)
-uUseTauBlur: { value: true },     // toggle for Option E
-uK: { value: 0.7 },               // keep the floor blend from Option C
+      // 2) In tryRunPipelineAndAttach() — build/refresh the visible cloud mesh
+const globeRadius = 100;
+const SHELLS = 10;
 
-          }
-        });
-        mat.toneMapped = false;
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.frustumCulled = false;
-        mesh.renderOrder   = 15;
-        scene!.add(mesh);
-        meshRef.current = mesh;
-        matRef.current  = mat;
-      } else {
-        const mat = matRef.current!;
-        mat.uniforms.uLook.value = lookTexRef.current;
-        mat.uniforms.uTau.value  = tau;
-        mat.uniforms.uCov.value  = covBlur;
-        mat.uniforms.uTau.value     = tau;
-mat.uniforms.uCov.value     = covBlur;
-mat.uniforms.uTauBlur.value = tauBlur;
+// we’ll drive radius in the shader, so use a unit sphere here
+const geom = new THREE.SphereGeometry(1, 256, 128);
 
-      }
+if (!meshRef.current) {
+  const mat = new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader:   CLOUD_SHELL_VERT,   // <- use new vert
+    fragmentShader: CLOUD_FRAG,         // same frag
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.NormalBlending,
+    uniforms: {
+      // existing uniforms
+      uLook:     { value: lookTexRef.current },
+      uTau:      { value: tau },
+      uCov:      { value: era5CoverageRawRef.current },
+      uEps:      { value: feather },
+      uLonOffset:{ value: 0.25 },
+      uFlipV:    { value: true },
+      uTauBlur:  { value: tauBlur },
+      uUseTauBlur: { value: true },
+      uK:        { value: 0.7 },
+
+      // NEW shell uniforms
+      uBaseR:      { value: globeRadius + 0.25 }, // same as your old overlayR
+      uDz:         { value: 0.5 },                 // start with zero spacing
+      uShellCount: { value: SHELLS },
+
+          uLayerFalloff:     { value: 0.2 },  // how much the outermost fades (0.6 ≈ 40% lighter)
+    uDensityJitterAmp: { value: 0.1 }, // ±15% alpha jitter per shell/uv
+    uFeatherJitterAmp: { value: 0.003 } // +0.003 feather per shell
+    }
+  });
+  mat.toneMapped = false;
+  // Controls for your CLOUD_SHELL material
+paneHubDisposeCleanup.push(
+  PaneHub.bind(
+    `Cloud Cover (${pressureLevel} hPa)`,
+    {
+      Epsilon: {
+        type: "number",
+        uniform: "uEps",
+        min: 0.0,
+        max: 0.1,
+        step: 0.001,
+      },
+      CoverageBlendK: {
+        type: "number",
+        uniform: "uK",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+      },
+      ShellSpacing_uDz: {
+        type: "number",
+        uniform: "uDz",
+        min: 0.0,
+        max: 10.0,
+        step: 0.1,
+      },
+      LayerFalloff: {
+        type: "number",
+        uniform: "uLayerFalloff",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+      },
+      DensityJitterAmp: {
+        type: "number",
+        uniform: "uDensityJitterAmp",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+      },
+      FeatherJitterAmp: {
+        type: "number",
+        uniform: "uFeatherJitterAmp",
+        min: 0.0,
+        max: 0.5,
+        step: 0.001,
+      },
+    },
+    mat
+  )
+);
+
+
+  // create instanced mesh with 5 instances
+  const inst = new THREE.InstancedMesh(geom, mat, SHELLS);
+
+  // set per-instance matrices to identity
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < SHELLS; i++) inst.setMatrixAt(i, m);
+
+  inst.instanceMatrix.needsUpdate = true;
+  inst.frustumCulled = false;
+  inst.renderOrder   = 15;
+
+  scene!.add(inst);
+  meshRef.current = inst as unknown as THREE.Mesh;  // keep your refs happy
+  matRef.current  = mat;
+} else {
+  const mat = matRef.current!;
+  mat.uniforms.uLook.value    = lookTexRef.current;
+  mat.uniforms.uTau.value     = tau;
+  mat.uniforms.uCov.value     = covBlur;
+  mat.uniforms.uTauBlur.value = tauBlur;
+
+  // (optional live tweak) — you can expose these later
+  // mat.uniforms.uDz.value = 0.0;
+  // mat.uniforms.uBaseR.value = globeRadius + 0.25;
+}
+
 
       renderer!.render(scene!, camera!);
     }
 
     return () => {
       disposed = true;
+      for (const d of paneHubDisposeCleanup){
+        if (d) d();
+      }
+
       pipelineRef.current?.dispose(); pipelineRef.current = null;
       if (meshRef.current && scene) scene.remove(meshRef.current);
       meshRef.current?.geometry.dispose();
