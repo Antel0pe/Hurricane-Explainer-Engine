@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { useEffect, useRef } from "react";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PaneHub } from "./tweaks/PaneHub";
+import { GET_POSITION_Z_SHARED_GLSL3 } from "./ShadersLib";
 
 // Swap this to your endpoint (PNG of the global fBm look field, R in [0..1])
 const FBM_NOISE_API = "/api/cloud_cover/noise";
@@ -13,6 +14,13 @@ function colorChannelFromPressure(p: number): 0|1|2 {
   if (p === 500) return 1; // G
   if (p === 250) return 2; // B
   return 0;                // default to R
+}
+
+function zOffsetForPressure(p: number): number {
+  if (p === 850) return 0.5;
+  if (p === 500) return 1.0;
+  if (p === 250) return 1.5;
+  return 0.5;
 }
 
 
@@ -329,32 +337,123 @@ return { singleChannelRawEra5: this.singleRedChannelForPressureLevelTarget.textu
 
 // ------------------------------- Display shaders -------------------------------
 // 1) NEW vertex shader (replace CLOUD_VERT with this)
-const CLOUD_SHELL_VERT = /* glsl */`
+// --- NEW CLOUD_SHELL_VERT (GLSL3) ---
+// const CLOUD_SHELL_VERT = /* glsl */`
+// out vec3 vWorld;
+// flat out int vShell;
+
+// uniform float uBaseR;      // meters
+// uniform float uDz;         // meters between shells
+// uniform int   uShellCount;
+
+// uniform float uZOffset;        // extra outward meters per pressure level
+// uniform bool  uUseTerrain;     // sample terrain yes/no
+// uniform sampler2D uTerrainTexture; // equirect height/gh texture, R in [0..1]
+// uniform float uExaggeration;   // meters per unit of terrain texture
+// uniform float uAboveTerrain;   // constant lift above terrain (meters)
+
+// uniform float uLonOffset;      // keep consistent with frag mapping
+// uniform bool  uFlipV;
+
+// vec2 worldToUV_dir(vec3 dir){
+//   vec3 n = normalize(dir);
+//   float lat = asin(clamp(n.y, -1.0, 1.0));
+//   float lon = atan(-n.z, n.x);
+//   float u = fract(lon / (2.0*3.141592653589793) + 0.5 + uLonOffset);
+//   float v = 0.5 - lat / 3.141592653589793;
+//   if (uFlipV) v = 1.0 - v;
+//   return vec2(u, v);
+// }
+
+// void main() {
+//   float idx = float(gl_InstanceID);
+//   vec3 dir = normalize(position);
+
+//   // --- optional terrain height (in meters) ---
+//   float terrainMeters = 0.0;
+//   if (uUseTerrain) {
+//     vec2 uv = worldToUV_dir(dir);
+//     float hNorm = texture(uTerrainTexture, uv).r;  // 0..1
+//     terrainMeters = uExaggeration * hNorm + uAboveTerrain;
+//   }
+
+//   // base radius + shell spacing + terrain + z-offset
+//   float radius = uBaseR + idx * uDz + terrainMeters + uZOffset;
+
+//   vec3 shellPos = dir * radius;
+//   vec4 wp = modelMatrix * vec4(shellPos, 1.0);
+
+//   vWorld = wp.xyz;
+//   gl_Position = projectionMatrix * viewMatrix * wp;
+
+//   vShell = gl_InstanceID;
+// }
+// `;
+
+const CLOUD_SHELL_VERT = `
+// bring in your GLSL3 decoder & ranges
+${GET_POSITION_Z_SHARED_GLSL3}
+
+const float PI = 3.14159265358979323846;
 out vec3 vWorld;
-flat out int vShell; 
+flat out int vShell;
 
-uniform float uBaseR;      // base radius of the cloud shell (meters in your world units)
-uniform float uDz;         // radial spacing between shells (same units as uBaseR)
-uniform int   uShellCount; // just for reference if you want to fade by layer
+uniform float uBaseR;           // meters/world units
+uniform float uDz;              // per-shell spacing
+uniform int   uShellCount;
 
-void main() {
-  // Use instancing to push each sphere outward along its normal.
-  // gl_InstanceID is 0..(uShellCount-1)
+uniform float uZOffset;         // per-layer vertical offset (meters/world units)
+
+// terrain sampling
+uniform bool       uUseTerrain;
+uniform sampler2D  uTerrainTexture;
+uniform float      uExaggeration;   // SAME semantics as winds (before *50)
+uniform float      uAboveTerrain;   // meters/world units to add
+
+// mapping parity with fragment shader
+uniform float uLonOffset;
+uniform bool  uFlipV;
+
+vec2 worldToUV_dir(vec3 dirW){
+  vec3 n = normalize(dirW);
+  float lat = asin(clamp(n.y, -1.0, 1.0));
+  float lon = atan(-n.z, n.x);
+  float u = fract(lon / (2.0*PI) + 0.5 + uLonOffset);
+  float v = 0.5 - lat / PI;
+  if (uFlipV) v = 1.0 - v;
+  return vec2(u, v);
+}
+
+void main(){
   float idx = float(gl_InstanceID);
 
-  // direction from sphere center (ignore original radius; use our own uBaseR)
-  vec3 dir = normalize(position);
+  // object-space unit vector from sphere mesh
+  vec3 dir_obj = normalize(position);
 
-  // displace radially by idx * uDz
-  vec3 shellPos = dir * (uBaseR + idx * uDz);
+  // rotate to WORLD space (ignore translation; w=0)
+  vec3 dir_world = normalize((modelMatrix * vec4(dir_obj, 0.0)).xyz);
 
-  vec4 wp = modelMatrix * vec4(shellPos, 1.0);
+  // ---- sample terrain in world-UV space, using SAME decoder as winds ----
+  float terrainMeters = 0.0;
+  if (uUseTerrain) {
+    vec2 uv = worldToUV_dir(dir_world);
+    // returns t in [0,1] when exaggeration==1.0 (your helper)
+    float hNorm = get_position_z_glsl3(uTerrainTexture, uv, 1.0); 
+    // match winds: uExaggeration * 50.0 * t + uAboveTerrain
+    terrainMeters = uExaggeration * hNorm + uAboveTerrain;
+  }
+
+  // final radius: base + shell + terrain + per-layer z offset
+  float radius = uBaseR + idx * uDz + terrainMeters + uZOffset;
+
+  vec3 shellPos_world = dir_world * radius;
+  vec4 wp = vec4(shellPos_world, 1.0);
+
   vWorld = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
-
   vShell = gl_InstanceID;
 }
-`;
+`
 
 // // Final lightweight compose: feathered mask × coverage
 // const CLOUD_FRAG = /* glsl */`
@@ -637,6 +736,7 @@ type Props = {
   tilePx?: number;                           // per-tile solver size (e.g., 32)
   iterations?: number;                       // threshold iterations (e.g., 10)
   pressureLevel: number;
+    gphTex?: THREE.Texture | null;  // geopotential height or DEM, R in [0..1]
 };
 
 export default function CloudCoverLayer({
@@ -651,6 +751,7 @@ export default function CloudCoverLayer({
   eraSize = { w: 1440, h: 721 },
   tilePx = 32,
   iterations = 10,
+  gphTex,
 }: Props) {
   const meshRef = useRef<THREE.Mesh | null>(null);
   const matRef  = useRef<THREE.ShaderMaterial | null>(null);
@@ -755,10 +856,17 @@ if (!meshRef.current) {
           uLayerFalloff:     { value: 0.2 },  // how much the outermost fades (0.6 ≈ 40% lighter)
     uDensityJitterAmp: { value: 0.1 }, // ±15% alpha jitter per shell/uv
     uFeatherJitterAmp: { value: 0.003 }, // +0.003 feather per shell
-    uShellOffsetScale: { value: 0.0001 },        
+    uShellOffsetScale: { value: 0.0001 },  
+          uZOffset:        { value: zOffsetForPressure(pressureLevel) },        // <- main slider
+      uUseTerrain:     { value: !!( gphTex ?? null ) },
+      uTerrainTexture: { value: gphTex ?? null },
+      uExaggeration:   { value: 1.0 },
+      uAboveTerrain:   { value: 0.0 },    
+       uPressure:       { value: pressureLevel },  
     }
   });
   mat.toneMapped = false;
+  
   // Controls for your CLOUD_SHELL material
 paneHubDisposeCleanup.push(
   PaneHub.bind(
@@ -807,7 +915,16 @@ paneHubDisposeCleanup.push(
         step: 0.001,
       },
     ShellOffsetScale: { type: "number", uniform: "uShellOffsetScale", min: 0.0, max: 0.001, step: 0.0001 },
+       Z_Offset:          { type: "number", uniform: "uZOffset", min: -10.0, max: 10.0, step: 0.01 },
+
+        TerrainExaggeration: { type: "number", uniform: "uExaggeration", min: 0.0, max: 100.0, step: 1.0 },
+        Above_Terrain_m:   { type: "number", uniform: "uAboveTerrain", min: -50.0, max: 50.0, step: 1.0 },
+  Use_Terrain: {
+      type: "boolean",
+      uniform: "uUseTerrain",
+      value: !!gphTex,
     },
+      },
     mat
   )
 );
@@ -858,7 +975,7 @@ paneHubDisposeCleanup.push(
       era5CoverageRawRef.current?.dispose();  era5CoverageRawRef.current  = null;
       lookTexRef.current?.dispose(); lookTexRef.current = null;
     };
-  }, [enabled, url, renderer, scene, camera, opacity, feather, eraSize.w, eraSize.h, tilePx, iterations]);
+  }, [enabled, url, renderer, scene, camera, opacity, feather, eraSize.w, eraSize.h, tilePx, iterations, gphTex]);
 
   // Live param updates
   useEffect(() => { if (matRef.current) matRef.current.uniforms.uOpacity.value = opacity; }, [opacity]);

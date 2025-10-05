@@ -31,7 +31,7 @@ export default function SidebarPane() {
       <ControlsHelp />
 
       {/* Tweakpane host */}
-      <div ref={hostRef} style={{ flex: 1, overflow: "auto", padding: 8 }} />
+      <div ref={hostRef} style={{ flex: 1, overflow: "auto"}} />
     </aside>
   );
 }

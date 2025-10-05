@@ -12,48 +12,10 @@ import { Features } from "./tweaks/FeatureBus";
 import { FEAT } from "./tweaks/Features";
 import { PaneHub } from "./tweaks/PaneHub";
 import { useFeatureFlag } from "./tweaks/FeatureBusHook";
-
-export const min_max_gph_ranges_glsl = `
-uniform float uPressure;
-void getGphRange(float pressure, out float minRange, out float maxRange) {
-    if (pressure == 250.0) {
-        minRange = 9600.0;
-        maxRange = 11200.0;
-    } else if (pressure == 500.0) {
-        minRange = 4600.0;
-        maxRange = 6000.0;
-    } else if (pressure == 850.0) {
-        minRange = 1200.0;
-        maxRange = 1600.0;
-    } else {
-        // Default/fallback values
-        minRange = 0.0;
-        maxRange = 0.0;
-    }
-}
-`;
+import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_shared_glsl } from "./ShadersLib";
 
 
-// Shared GLSL utilities reused by vertex shaders
-const get_position_z_shared_glsl = `
-  ${min_max_gph_ranges_glsl}
 
-  float decodeElevation(vec3 rgb) {
-    float R = floor(rgb.r * 255.0 + 0.5);
-    float G = floor(rgb.g * 255.0 + 0.5);
-    float B = floor(rgb.b * 255.0 + 0.5);
-    return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
-  }
-
-  float get_position_z(sampler2D tex, vec2 uv, float exaggeration) {
-    float minGPHRange, maxGPHRange;
-    getGphRange(uPressure, minGPHRange, maxGPHRange);
-
-    float elev = decodeElevation(texture2D(tex, uv).rgb);
-    float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
-    return exaggeration * t;
-  }
-`;
 
 const mapUVtoLatLng = `
   float globeRadius = 100.0;
@@ -154,28 +116,9 @@ const FRAG = `
     vec3 landRgb = texture2D(uLandTexture, vUv).rgb;
     float landWhiteLevel = max(max(landRgb.r, landRgb.g), landRgb.b);
     float isLand = step(0.5, 1.0 - landWhiteLevel);
-    color = mix(color, vec3(0.0), isLand * 0.0);
+    color = mix(color, vec3(0.0), isLand * 1.0);
 
     gl_FragColor = vec4(color, 0.5);
-  }
-`;
-
-// GLSL3 shared helpers for points (GLSL3-compatible texture())
-const GET_POSITION_Z_SHARED_GLSL3 = `
-  ${min_max_gph_ranges_glsl}
-  float decodeElevation(vec3 rgb) {
-    float R = floor(rgb.r * 255.0 + 0.5);
-    float G = floor(rgb.g * 255.0 + 0.5);
-    float B = floor(rgb.b * 255.0 + 0.5);
-    return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
-  }
-  float get_position_z_glsl3(sampler2D tex, vec2 uv, float exaggeration) {
-    float minGPHRange, maxGPHRange;
-    getGphRange(uPressure, minGPHRange, maxGPHRange);
-
-    float elev = decodeElevation(texture(tex, uv).rgb);
-    float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
-    return exaggeration * t;
   }
 `;
 
@@ -1152,7 +1095,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const handleLandTex = useCallback((tex: THREE.Texture) => {
     landTexRef.current = tex;
     // optionally bump a version if you *need* to react elsewhere
-    // setLandTexVersion(v => v + 1);
+    setLandTexVersion(v => v + 1);
   }, []);
 
   useEffect(() => {
@@ -1315,7 +1258,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           landTexture={landTexRef.current}
           pressureLevel={250}
           exaggeration={exaggeration}
-          zOffset={0}
+          zOffset={1.5}
           onTextureChange={handleGph250}
         />)}
 
@@ -1332,7 +1275,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           landTexture={landTexRef.current}
           pressureLevel={500}
           exaggeration={exaggeration}
-          zOffset={0.5}
+          zOffset={1.0}
           onTextureChange={handleGph500}
         />)}
 
@@ -1349,7 +1292,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           landTexture={landTexRef.current}
           pressureLevel={850}
           exaggeration={exaggeration}
-          zOffset={1}
+          zOffset={0.5}
           onTextureChange={handleGph850}
         />)}
       </>
@@ -1363,6 +1306,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         scene={sceneRef.current}
         camera={cameraRef.current}
         controls={controlsRef.current}
+        gphTex={heightTexRef.current}
         pressureLevel={250}     // if your component accepts it
       />
     )}
@@ -1375,6 +1319,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         scene={sceneRef.current}
         camera={cameraRef.current}
         controls={controlsRef.current}
+        gphTex={heightTexRef2.current}
         pressureLevel={500}     // if your component accepts it
       />
     )}
@@ -1387,6 +1332,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         scene={sceneRef.current}
         camera={cameraRef.current}
         controls={controlsRef.current}
+        gphTex={heightTexRef3.current}
         pressureLevel={850}     // if your component accepts it
       />
     )}

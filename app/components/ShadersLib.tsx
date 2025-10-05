@@ -1,0 +1,60 @@
+export const min_max_gph_ranges_glsl = `
+uniform float uPressure;
+void getGphRange(float pressure, out float minRange, out float maxRange) {
+    if (pressure == 250.0) {
+        minRange = 9600.0;
+        maxRange = 11200.0;
+    } else if (pressure == 500.0) {
+        minRange = 4600.0;
+        maxRange = 6000.0;
+    } else if (pressure == 850.0) {
+        minRange = 1200.0;
+        maxRange = 1600.0;
+    } else {
+        // Default/fallback values
+        minRange = 0.0;
+        maxRange = 0.0;
+    }
+}
+`;
+
+
+// Shared GLSL utilities reused by vertex shaders
+export const get_position_z_shared_glsl = `
+  ${min_max_gph_ranges_glsl}
+
+  float decodeElevation(vec3 rgb) {
+    float R = floor(rgb.r * 255.0 + 0.5);
+    float G = floor(rgb.g * 255.0 + 0.5);
+    float B = floor(rgb.b * 255.0 + 0.5);
+    return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
+  }
+
+  float get_position_z(sampler2D tex, vec2 uv, float exaggeration) {
+    float minGPHRange, maxGPHRange;
+    getGphRange(uPressure, minGPHRange, maxGPHRange);
+
+    float elev = decodeElevation(texture2D(tex, uv).rgb);
+    float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
+    return exaggeration * t;
+  }
+`;
+
+
+export const GET_POSITION_Z_SHARED_GLSL3 = `
+  ${min_max_gph_ranges_glsl}
+  float decodeElevation(vec3 rgb) {
+    float R = floor(rgb.r * 255.0 + 0.5);
+    float G = floor(rgb.g * 255.0 + 0.5);
+    float B = floor(rgb.b * 255.0 + 0.5);
+    return (R * 65536.0 + G * 256.0 + B) * 0.1 - 10000.0;
+  }
+  float get_position_z_glsl3(sampler2D tex, vec2 uv, float exaggeration) {
+    float minGPHRange, maxGPHRange;
+    getGphRange(uPressure, minGPHRange, maxGPHRange);
+
+    float elev = decodeElevation(texture(tex, uv).rgb);
+    float t = clamp((elev - minGPHRange) / (maxGPHRange - minGPHRange), 0.0, 1.0);
+    return exaggeration * t;
+  }
+`;
