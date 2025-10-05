@@ -10,8 +10,8 @@ const FBM_NOISE_API = "/api/cloud_cover/noise";
 
 function colorChannelFromPressure(p: number): 0|1|2 {
   if (p === 850) return 0; // R
-  if (p === 500) return 2; // B
-  if (p === 250) return 1; // G
+  if (p === 500) return 1; // G
+  if (p === 250) return 2; // B
   return 0;                // default to R
 }
 
@@ -271,7 +271,7 @@ this.copyPressureLevelChannelToRed.dispose();
     this.copyPressureLevelChannelToRed.uniforms.uSrc.value  = covRawTex;
     this.copyPressureLevelChannelToRed.uniforms.uChan.value = colorChannel;
     this.draw(this.copyPressureLevelChannelToRed, this.singleRedChannelForPressureLevelTarget);
-    this.singleRedChannelForPressureLevelTarget.texture.generateMipmaps = true;
+    // this.singleRedChannelForPressureLevelTarget.texture.generateMipmaps = true;
 
     // 1) Blur coverage H→V into covBlurV (mips enabled)
     // this.blurHMat.uniforms.uSrc.value = this.singleRedChannelForPressureLevelTarget.texture;
@@ -321,7 +321,7 @@ this.blurVMat.uniforms.uSrc.value = this.tauBlurH.texture;
 this.draw(this.blurVMat, this.tauBlurV);
 this.tauBlurV.texture.generateMipmaps = true;
 
-return { covBlur: this.covBlurV.texture, tau: this.tauRT.texture, tauBlur: this.tauBlurV.texture };
+return { singleChannelRawEra5: this.singleRedChannelForPressureLevelTarget.texture, tau: this.tauRT.texture, tauBlur: this.tauBlurV.texture };
 
 
   }
@@ -418,24 +418,161 @@ void main() {
 // }
 // `;
 // Final lightweight compose: feathered mask × coverage
+// const CLOUD_FRAG = /* glsl */`
+// precision highp float;
+// flat in int vShell;
+// in vec3 vWorld; out vec4 fragColor;
+// uniform sampler2D uLook;   // fBm look tex
+// uniform sampler2D uTau;    // solved thresholds
+// uniform sampler2D uCov;    // blurred coverage
+// uniform float uOpacity;
+// uniform float uEps;        // feather width in look-space
+// uniform float uLonOffset;
+// uniform bool  uFlipV;
+// uniform sampler2D uTauBlur; // blurred tau
+// uniform bool  uUseTauBlur;  // toggle
+// uniform float uK;           // reuse blend factor
+// uniform int   uShellCount;
+// uniform float uLayerFalloff;     // 0..1, how fast outer shells fade (try 0.6)
+// uniform float uDensityJitterAmp; // 0..0.5, multiplicative noise on alpha (try 0.15)
+// uniform float uFeatherJitterAmp; // 0..0.02, extra eps per shell (try 0.003)
+
+// // tiny, cheap hash → [0,1)
+// float hash31(vec3 p){
+//   return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+// }
+
+// vec2 worldToUV(vec3 p){
+//   vec3 n = normalize(p);
+//   float lat = asin(clamp(n.y, -1.0, 1.0));
+//   float lon = atan(-n.z, n.x);
+//   float u = fract(lon / (2.0*3.141592653589793) + 0.5 + uLonOffset);
+//   float v = 0.5 - lat / 3.141592653589793;
+//   if (uFlipV) v = 1.0 - v;
+//   return vec2(u, v);
+// }
+// void main(){
+//   vec2 uv = worldToUV(vWorld);
+
+//   // already added earlier:
+//   float offs = 0.0015 * float(vShell);
+//   uv += vec2(
+//     sin(123.45*float(vShell)) * offs,
+//     cos(456.78*float(vShell)) * offs
+//   );
+
+//   float L = texture(uLook, uv).r;
+//   float T = texture(uTau,  uv).r;
+//   float C = texture(uCov,  uv).r;
+
+//   // slightly different feather per shell
+//   float epsShell = uEps + uFeatherJitterAmp * float(vShell);
+
+//   float T_used = uUseTauBlur ? texture(uTauBlur, uv).r : T;
+//   T_used += 0.02 * float(vShell);      // small threshold bias from earlier
+//   float mask = smoothstep(T_used - epsShell, T_used + epsShell, L);
+
+//   // base alpha (Option C/E mix)
+//   float alpha = mix(C, mask * C, uK);
+
+//   // ---- NEW: per-shell density shaping ----
+//   // 1) outer shells contribute less (Beer–Lambert-ish falloff)
+//   float shellN = float(uShellCount > 1 ? uShellCount - 1 : 1);
+//   float t = float(vShell) / shellN;             // 0 (inner) → 1 (outer)
+//   float falloff = mix(1.0, 1.0 - uLayerFalloff, t);
+
+//   // 2) multiplicative tiny jitter so stacks aren’t uniform
+//   float jitter = mix(1.0 - uDensityJitterAmp,
+//                      1.0 + uDensityJitterAmp,
+//                      hash31(vec3(uv * 1024.0, float(vShell)*13.0)));
+
+//   alpha *= falloff * jitter;
+
+//   if (alpha <= 0.001) discard;
+//   fragColor = vec4(vec3(alpha), alpha);
+// }
+// `;
+
+// const CLOUD_FRAG = /* glsl */`
+// precision highp float;
+// flat in int vShell;
+// in vec3 vWorld; out vec4 fragColor;
+// uniform sampler2D uLook;   // fBm look tex
+// uniform sampler2D uTau;    // solved thresholds
+// uniform sampler2D uCov;    // blurred coverage
+// uniform float uOpacity;
+// uniform float uEps;        // feather width in look-space
+// uniform float uLonOffset;
+// uniform bool  uFlipV;
+// uniform sampler2D uTauBlur; // blurred tau
+// uniform bool  uUseTauBlur;  // toggle
+// uniform float uK;           // reuse blend factor
+// uniform int   uShellCount;
+// uniform float uLayerFalloff;     // 0..1, how fast outer shells fade (try 0.6)
+// uniform float uDensityJitterAmp; // 0..0.5, multiplicative noise on alpha (try 0.15)
+// uniform float uFeatherJitterAmp; // 0..0.02, extra eps per shell (try 0.003)
+
+// // tiny, cheap hash → [0,1)
+// float hash31(vec3 p){
+//   return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+// }
+
+// vec2 worldToUV(vec3 p){
+//   vec3 n = normalize(p);
+//   float lat = asin(clamp(n.y, -1.0, 1.0));
+//   float lon = atan(-n.z, n.x);
+//   float u = fract(lon / (2.0*3.141592653589793) + 0.5 + uLonOffset);
+//   float v = 0.5 - lat / 3.141592653589793;
+//   if (uFlipV) v = 1.0 - v;
+//   return vec2(u, v);
+// }
+// void main(){
+//   vec2 uv = worldToUV(vWorld);
+
+// float cov = texture(uCov, uv).r;      // 0..1 ERA5 coverage (from your swizzled-R texture)
+// float L   = texture(uLook, uv).r;     // your correlated noise (domain-warped fBm, etc.)
+
+// // Map coverage to a threshold in the same space as L.
+// // If L ~ U(0,1), the inverse-CDF is trivial: threshold t = 1 - cov.
+// // If L is roughly Gaussian(0,1), use Phi^{-1}(1-cov). With U(0,1) noise, this is fine:
+// float t = 1.0 - cov;
+
+// // Binary mask with a tiny feather (edge softness)
+// float mask = smoothstep(t - uEps, t + uEps, L);
+
+// // Composite: use mask *and* retain a coverage floor so thin areas don’t vanish:
+// float alpha = mix(cov, mask * cov, uK); // uK≈0.6–0.8
+
+// if (alpha <= 0.001) discard;
+// fragColor = vec4(vec3(alpha), alpha);
+
+// }
+// `;
+
 const CLOUD_FRAG = /* glsl */`
+// CLOUD_FRAG — accurate per-pixel quantile + cloud styling
 precision highp float;
+
 flat in int vShell;
-in vec3 vWorld; out vec4 fragColor;
-uniform sampler2D uLook;   // fBm look tex
-uniform sampler2D uTau;    // solved thresholds
-uniform sampler2D uCov;    // blurred coverage
-uniform float uOpacity;
-uniform float uEps;        // feather width in look-space
-uniform float uLonOffset;
+in vec3 vWorld;
+out vec4 fragColor;
+
+uniform sampler2D uLook;      // correlated carrier (tileable fBm / warped noise), linear
+uniform sampler2D uCov;       // ERA5 coverage (0..1) as DATA texture (linear, nearest, no mips)
+
+uniform float uOpacity;       // final alpha scaler
+uniform float uEps;           // feather width around threshold (e.g. 0.02)
+uniform float uK;             // coverage floor vs mask blend (0..1), e.g. 0.7
+
+uniform float uLonOffset;     // your equirect wrap shift
 uniform bool  uFlipV;
-uniform sampler2D uTauBlur; // blurred tau
-uniform bool  uUseTauBlur;  // toggle
-uniform float uK;           // reuse blend factor
-uniform int   uShellCount;
-uniform float uLayerFalloff;     // 0..1, how fast outer shells fade (try 0.6)
-uniform float uDensityJitterAmp; // 0..0.5, multiplicative noise on alpha (try 0.15)
-uniform float uFeatherJitterAmp; // 0..0.02, extra eps per shell (try 0.003)
+
+uniform int   uShellCount;    // number of stacked shells
+uniform float uLayerFalloff;  // 0..1: fade outer shells (e.g. 0.2..0.6)
+uniform float uDensityJitterAmp; // 0..0.5: ± jitter on alpha (e.g. 0.1)
+uniform float uFeatherJitterAmp; // extra feather per shell (e.g. 0.003)
+
+uniform float uShellOffsetScale; // per-shell offset scale (was hardcoded 0.0015)
 
 // tiny, cheap hash → [0,1)
 float hash31(vec3 p){
@@ -451,48 +588,40 @@ vec2 worldToUV(vec3 p){
   if (uFlipV) v = 1.0 - v;
   return vec2(u, v);
 }
+
 void main(){
+  // --- UV on globe + small per-shell offset to avoid Z-fighting banding ---
   vec2 uv = worldToUV(vWorld);
+  float shellF = float(vShell);
+  float offs   = uShellOffsetScale * shellF;  
+  uv += vec2(sin(123.45*shellF), cos(456.78*shellF)) * offs;
 
-  // already added earlier:
-  float offs = 0.0015 * float(vShell);
-  uv += vec2(
-    sin(123.45*float(vShell)) * offs,
-    cos(456.78*float(vShell)) * offs
-  );
+  // --- Data + carrier ---
+  float cov = texture(uCov,  uv).r;     // ERA5 coverage 0..1 (raw, no gamma/mips)
+  float L   = texture(uLook, uv).r; // correlated field ~ U(0,1) (or remapped)
 
-  float L = texture(uLook, uv).r;
-  float T = texture(uTau,  uv).r;
-  float C = texture(uCov,  uv).r;
+  // --- Per-pixel quantile threshold: preserves hurricane ring/location ---
+  float t = 1.0 - cov;                  // inverse CDF for U(0,1)
+  float epsShell = uEps + uFeatherJitterAmp * shellF;
+  float mask = smoothstep(t - epsShell, t + epsShell, L);
 
-  // slightly different feather per shell
-  float epsShell = uEps + uFeatherJitterAmp * float(vShell);
+  // --- Coverage floor + mask: reads as clouds, not fog ---
+  float alpha = mix(cov, mask * cov, uK);   // uK ~ 0.6–0.8
 
-  float T_used = uUseTauBlur ? texture(uTauBlur, uv).r : T;
-  T_used += 0.02 * float(vShell);      // small threshold bias from earlier
-  float mask = smoothstep(T_used - epsShell, T_used + epsShell, L);
-
-  // base alpha (Option C/E mix)
-  float alpha = mix(C, mask * C, uK);
-
-  // ---- NEW: per-shell density shaping ----
-  // 1) outer shells contribute less (Beer–Lambert-ish falloff)
-  float shellN = float(uShellCount > 1 ? uShellCount - 1 : 1);
-  float t = float(vShell) / shellN;             // 0 (inner) → 1 (outer)
-  float falloff = mix(1.0, 1.0 - uLayerFalloff, t);
-
-  // 2) multiplicative tiny jitter so stacks aren’t uniform
-  float jitter = mix(1.0 - uDensityJitterAmp,
-                     1.0 + uDensityJitterAmp,
-                     hash31(vec3(uv * 1024.0, float(vShell)*13.0)));
+  // --- Layer shaping ---
+  float shellN  = float(max(uShellCount - 1, 1));
+  float s       = shellF / shellN;                   // 0 inner → 1 outer
+  float falloff = mix(1.0, 1.0 - uLayerFalloff, s);  // fade outer shells
+  float jitter  = mix(1.0 - uDensityJitterAmp,
+                      1.0 + uDensityJitterAmp,
+                      hash31(vec3(uv * 1024.0, shellF*13.0)));
 
   alpha *= falloff * jitter;
 
   if (alpha <= 0.001) discard;
-  fragColor = vec4(vec3(alpha), alpha);
+  fragColor = vec4(vec3(alpha), alpha * uOpacity);
 }
-`;
-
+`
 
 // -------------------------------- React component --------------------------------
 type Props = {
@@ -548,9 +677,10 @@ export default function CloudCoverLayer({
         t.flipY = true;
         t.wrapS = THREE.RepeatWrapping;
         t.wrapT = THREE.ClampToEdgeWrapping;
-        t.minFilter = THREE.LinearFilter;
-        t.magFilter = THREE.LinearFilter;
+        t.minFilter = THREE.NearestFilter;
+        t.magFilter = THREE.NearestFilter;
         t.colorSpace = THREE.NoColorSpace;
+        t.generateMipmaps = false;
         era5CoverageRawRef.current = t;
         tryRunPipelineAndAttach();
       },
@@ -580,7 +710,7 @@ export default function CloudCoverLayer({
       if (!pipelineRef.current || !era5CoverageRawRef.current || !lookTexRef.current) return;
       const colorChannel = colorChannelFromPressure(pressureLevel);
       // ---- Run full pipeline (blur + per-tile threshold iterations) ----
-      const { covBlur, tau, tauBlur } = pipelineRef.current.runOnce({
+      const { singleChannelRawEra5, tau, tauBlur } = pipelineRef.current.runOnce({
         covRawTex: era5CoverageRawRef.current,
         lookTex:   lookTexRef.current,
         iterations,
@@ -606,9 +736,10 @@ if (!meshRef.current) {
     blending: THREE.NormalBlending,
     uniforms: {
       // existing uniforms
+      uOpacity:  { value: opacity },  
       uLook:     { value: lookTexRef.current },
       uTau:      { value: tau },
-      uCov:      { value: era5CoverageRawRef.current },
+      uCov:      { value: singleChannelRawEra5 },
       uEps:      { value: feather },
       uLonOffset:{ value: 0.25 },
       uFlipV:    { value: true },
@@ -623,7 +754,8 @@ if (!meshRef.current) {
 
           uLayerFalloff:     { value: 0.2 },  // how much the outermost fades (0.6 ≈ 40% lighter)
     uDensityJitterAmp: { value: 0.1 }, // ±15% alpha jitter per shell/uv
-    uFeatherJitterAmp: { value: 0.003 } // +0.003 feather per shell
+    uFeatherJitterAmp: { value: 0.003 }, // +0.003 feather per shell
+    uShellOffsetScale: { value: 0.0001 },        
     }
   });
   mat.toneMapped = false;
@@ -674,6 +806,7 @@ paneHubDisposeCleanup.push(
         max: 0.5,
         step: 0.001,
       },
+    ShellOffsetScale: { type: "number", uniform: "uShellOffsetScale", min: 0.0, max: 0.001, step: 0.0001 },
     },
     mat
   )
@@ -698,7 +831,7 @@ paneHubDisposeCleanup.push(
   const mat = matRef.current!;
   mat.uniforms.uLook.value    = lookTexRef.current;
   mat.uniforms.uTau.value     = tau;
-  mat.uniforms.uCov.value     = covBlur;
+  mat.uniforms.uCov.value     = singleChannelRawEra5;
   mat.uniforms.uTauBlur.value = tauBlur;
 
   // (optional live tweak) — you can expose these later

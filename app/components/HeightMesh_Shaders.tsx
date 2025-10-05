@@ -322,7 +322,7 @@ void main() {
 }
 `;
 
-  const SIM_FRAG = `
+const SIM_FRAG = `
     ${LAT_LNG_TO_UV_CONVERSION}
     precision highp float;
     in vec2 vUv;
@@ -551,15 +551,15 @@ export type WindLayerAPI = {
   trailReadRT: THREE.WebGLRenderTarget;
   trailWriteRT: THREE.WebGLRenderTarget;
   trailScene: THREE.Scene;
-trailPtsMat: THREE.ShaderMaterial;
-trailStampScene: THREE.Scene;
-trailStampCam: THREE.OrthographicCamera;
-trailStampMat: THREE.ShaderMaterial;
-trailOverlayMesh: THREE.Mesh;
-trailOverlayMat: THREE.ShaderMaterial;
-decayScene:THREE.Scene;
-decayCam: THREE.OrthographicCamera;
-decayMat: THREE.ShaderMaterial;
+  trailPtsMat: THREE.ShaderMaterial;
+  trailStampScene: THREE.Scene;
+  trailStampCam: THREE.OrthographicCamera;
+  trailStampMat: THREE.ShaderMaterial;
+  trailOverlayMesh: THREE.Mesh;
+  trailOverlayMat: THREE.ShaderMaterial;
+  decayScene: THREE.Scene;
+  decayCam: THREE.OrthographicCamera;
+  decayMat: THREE.ShaderMaterial;
 };
 
 type Props = { pngUrl: string; landUrl?: string; uvUrl?: string; exaggeration?: number, pressureLevel?: number, datehour?: string };
@@ -595,554 +595,554 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const [engineReady, setEngineReady] = useState(false);
 
   useEffect(() => {
-  const host = hostRef.current!;
-  const getSize = () => {
-    const r = host.getBoundingClientRect();
-    return { w: Math.max(1, r.width), h: Math.max(1, r.height) };
-  };
-  const { w, h } = getSize();
+    const host = hostRef.current!;
+    const getSize = () => {
+      const r = host.getBoundingClientRect();
+      return { w: Math.max(1, r.width), h: Math.max(1, r.height) };
+    };
+    const { w, h } = getSize();
 
-  // --- renderer / scene / camera ---
-  const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2 });
-  renderer.autoClear = false;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio ?? 1, 2));
-  renderer.setSize(w, h);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  host.appendChild(renderer.domElement);
+    // --- renderer / scene / camera ---
+    const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2 });
+    renderer.autoClear = false;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio ?? 1, 2));
+    renderer.setSize(w, h);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    host.appendChild(renderer.domElement);
 
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf7f9fc);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf7f9fc);
 
-  const globe = new ThreeGlobe()
-    .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-day.jpg');
-  scene.add(globe);
+    const globe = new ThreeGlobe()
+      .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-day.jpg');
+    scene.add(globe);
 
-  const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1e9);
-  camera.up.set(0, 1, 0);
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1e9);
+    camera.up.set(0, 1, 0);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
 
-  // let three globe load in
-  camera.position.set(0, -300, 150);  // any non-zero radius > 100 works
-controls.target.set(0, 0, 0);
-controls.update();
-renderer.render(scene, camera);    
+    // let three globe load in
+    camera.position.set(0, -300, 150);  // any non-zero radius > 100 works
+    controls.target.set(0, 0, 0);
+    controls.update();
+    renderer.render(scene, camera);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-  sun.position.set(1.5, 1.0, 2.0).multiplyScalar(1000);
-  scene.add(sun);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(1.5, 1.0, 2.0).multiplyScalar(1000);
+    scene.add(sun);
 
-  let stopped = false;
+    let stopped = false;
 
-  // --- render-on-demand (guarded; no recursive re-entry) ---
-  let rafId: number | null = null;
-  let animating = false;
+    // --- render-on-demand (guarded; no recursive re-entry) ---
+    let rafId: number | null = null;
+    let animating = false;
 
-  const render = () => renderer.render(scene, camera);
+    const render = () => renderer.render(scene, camera);
 
-  const startDampedRAF = () => {
-    if (stopped || animating) return; // start only once
-    animating = true;
+    const startDampedRAF = () => {
+      if (stopped || animating) return; // start only once
+      animating = true;
 
-    const tick = () => {
-      if (stopped) return;
-      const needsUpdate = controls.update(); // may emit 'change'
-      render();
-      if (needsUpdate) {
-        rafId = requestAnimationFrame(tick);
-      } else {
-        animating = false;
-        rafId = null;
-      }
+      const tick = () => {
+        if (stopped) return;
+        const needsUpdate = controls.update(); // may emit 'change'
+        render();
+        if (needsUpdate) {
+          rafId = requestAnimationFrame(tick);
+        } else {
+          animating = false;
+          rafId = null;
+        }
+      };
+
+      tick();
     };
 
-    tick();
-  };
+    const renderOnce = () => {
+      if (stopped) return;
+      render();
+    };
 
-  const renderOnce = () => {
-    if (stopped) return;
-    render();
-  };
-
-  controls.addEventListener("start", startDampedRAF);
-  controls.addEventListener("end", renderOnce);
-  controls.addEventListener("change", () => {
-    // If damping loop isn't running, at least render this change once.
-    if (!animating) renderOnce();
-  });
+    controls.addEventListener("start", startDampedRAF);
+    controls.addEventListener("end", renderOnce);
+    controls.addEventListener("change", () => {
+      // If damping loop isn't running, at least render this change once.
+      if (!animating) renderOnce();
+    });
 
     // ===== Hover-to-rotate (no mousedown) with light inertia =====
-  controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
+    controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
 
-  // pull bounds from controls so your existing settings still apply
-  // const minAz = controls.minAzimuthAngle ?? -Infinity;
-  // const maxAz = controls.maxAzimuthAngle ??  Infinity;
-  // const minPh = controls.minPolarAngle   ??  0;
-  // const maxPh = controls.maxPolarAngle   ??  Math.PI;
+    // pull bounds from controls so your existing settings still apply
+    // const minAz = controls.minAzimuthAngle ?? -Infinity;
+    // const maxAz = controls.maxAzimuthAngle ??  Infinity;
+    // const minPh = controls.minPolarAngle   ??  0;
+    // const maxPh = controls.maxPolarAngle   ??  Math.PI;
 
-  // const elem = renderer.domElement;
-  // const up   = camera.up.clone().normalize();
+    // const elem = renderer.domElement;
+    // const up   = camera.up.clone().normalize();
 
-  // // Map camera.up -> +Y like OrbitControls does
-  // const quat = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
-  // const quatInv = quat.clone().invert();
+    // // Map camera.up -> +Y like OrbitControls does
+    // const quat = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
+    // const quatInv = quat.clone().invert();
 
-  // const spherical = new THREE.Spherical();
-  // const offset    = new THREE.Vector3();
+    // const spherical = new THREE.Spherical();
+    // const offset    = new THREE.Vector3();
 
-  // // mouse→angle scaling similar to OrbitControls
-  // const ROTATE_SPEED = controls.rotateSpeed; // default 1.0
-  // const scale = (px: number) => (2 * Math.PI * px / elem.clientHeight) * ROTATE_SPEED;
+    // // mouse→angle scaling similar to OrbitControls
+    // const ROTATE_SPEED = controls.rotateSpeed; // default 1.0
+    // const scale = (px: number) => (2 * Math.PI * px / elem.clientHeight) * ROTATE_SPEED;
 
-  // // simple inertia to mimic damping
-  // let vTheta = 0, vPhi = 0;           // angular velocity
-  // const INERTIA = 0.10;               // 0..1 (higher = more glide)
-  // const GAIN    = 0.5;               // 0..1 (how much new mouse delta feeds in)
+    // // simple inertia to mimic damping
+    // let vTheta = 0, vPhi = 0;           // angular velocity
+    // const INERTIA = 0.10;               // 0..1 (higher = more glide)
+    // const GAIN    = 0.5;               // 0..1 (how much new mouse delta feeds in)
 
-  // const onMouseMove = (e: MouseEvent) => {
-  //   if (e.target !== elem) return;
-  //   const dx = (e.movementX ?? 0);
-  //   const dy = (e.movementY ?? 0);
+    // const onMouseMove = (e: MouseEvent) => {
+    //   if (e.target !== elem) return;
+    //   const dx = (e.movementX ?? 0);
+    //   const dy = (e.movementY ?? 0);
 
-  //   // accumulate desired angular velocity from mouse deltas
-  //   vTheta += -scale(dx) * GAIN; // azimuth (left/right)
-  //   vPhi   += -scale(dy) * GAIN; // polar   (up/down)
+    //   // accumulate desired angular velocity from mouse deltas
+    //   vTheta += -scale(dx) * GAIN; // azimuth (left/right)
+    //   vPhi   += -scale(dy) * GAIN; // polar   (up/down)
 
-  //   startDampedRAF(); // use your existing RAF kicker
-  // };
+    //   startDampedRAF(); // use your existing RAF kicker
+    // };
 
-  // apply the velocity each frame, decay with inertia, clamp, and reposition camera
-  // const applyOrbitStep = () => {
-  //   // 1) current offset in Y-up space
-  //   offset.copy(camera.position).sub(controls.target).applyQuaternion(quat);
-  //   spherical.setFromVector3(offset);
+    // apply the velocity each frame, decay with inertia, clamp, and reposition camera
+    // const applyOrbitStep = () => {
+    //   // 1) current offset in Y-up space
+    //   offset.copy(camera.position).sub(controls.target).applyQuaternion(quat);
+    //   spherical.setFromVector3(offset);
 
-  //   // 2) integrate velocity
-  //   spherical.theta += vTheta;
-  //   spherical.phi   += vPhi;
+    //   // 2) integrate velocity
+    //   spherical.theta += vTheta;
+    //   spherical.phi   += vPhi;
 
-  //   // 3) clamp to OrbitControls-style limits
-  //   spherical.theta = Math.max(minAz, Math.min(maxAz, spherical.theta));
-  //   spherical.phi   = Math.max(minPh, Math.min(maxPh, spherical.phi));
+    //   // 3) clamp to OrbitControls-style limits
+    //   spherical.theta = Math.max(minAz, Math.min(maxAz, spherical.theta));
+    //   spherical.phi   = Math.max(minPh, Math.min(maxPh, spherical.phi));
 
-  //   // 4) write back position (preserve radius)
-  //   offset.setFromSpherical(spherical).applyQuaternion(quatInv);
-  //   camera.position.copy(controls.target).add(offset);
-  //   camera.lookAt(controls.target);
+    //   // 4) write back position (preserve radius)
+    //   offset.setFromSpherical(spherical).applyQuaternion(quatInv);
+    //   camera.position.copy(controls.target).add(offset);
+    //   camera.lookAt(controls.target);
 
-  //   // 5) decay velocity (inertia)
-  //   vTheta *= INERTIA;
-  //   vPhi   *= INERTIA;
+    //   // 5) decay velocity (inertia)
+    //   vTheta *= INERTIA;
+    //   vPhi   *= INERTIA;
 
-  //   // let OrbitControls dispatch 'change' listeners (your render loop listens to controls.update())
-  //   controls.dispatchEvent({ type: 'change' });
-  // };
+    //   // let OrbitControls dispatch 'change' listeners (your render loop listens to controls.update())
+    //   controls.dispatchEvent({ type: 'change' });
+    // };
 
-  // hook our step into your damped RAF loop
-  // const _origUpdate = controls.update.bind(controls) as () => boolean;
-  // controls.update = (): boolean => {
-  //   // first, apply our orbit step so camera is up-to-date
-  //   applyOrbitStep();
-  //   // then run the normal OrbitControls update (handles zoom limits, etc.)
-  //   return _origUpdate();
-  // };
+    // hook our step into your damped RAF loop
+    // const _origUpdate = controls.update.bind(controls) as () => boolean;
+    // controls.update = (): boolean => {
+    //   // first, apply our orbit step so camera is up-to-date
+    //   applyOrbitStep();
+    //   // then run the normal OrbitControls update (handles zoom limits, etc.)
+    //   return _origUpdate();
+    // };
 
-  // elem.addEventListener('mousemove', onMouseMove);
+    // elem.addEventListener('mousemove', onMouseMove);
 
-  // keep wheel zoom & pan working, avoid double-rotate on drag
-  // controls.mouseButtons = {
-  //   LEFT: THREE.MOUSE.PAN,
-  //   MIDDLE: THREE.MOUSE.DOLLY,
-  //   RIGHT: THREE.MOUSE.PAN,
-  // };
+    // keep wheel zoom & pan working, avoid double-rotate on drag
+    // controls.mouseButtons = {
+    //   LEFT: THREE.MOUSE.PAN,
+    //   MIDDLE: THREE.MOUSE.DOLLY,
+    //   RIGHT: THREE.MOUSE.PAN,
+    // };
 
-  // // Request pointer lock when clicking the canvas
-  // elem.addEventListener("click", () => {
-  //   if (document.pointerLockElement !== elem) {
-  //     elem.requestPointerLock({ unadjustedMovement: true });
-  //   }
-  // });
+    // // Request pointer lock when clicking the canvas
+    // elem.addEventListener("click", () => {
+    //   if (document.pointerLockElement !== elem) {
+    //     elem.requestPointerLock({ unadjustedMovement: true });
+    //   }
+    // });
 
-  controls.minPolarAngle = 0.0001;
-controls.maxPolarAngle = Math.PI - 0.0001;
-controls.minAzimuthAngle = -Infinity;
-controls.maxAzimuthAngle =  Infinity;
+    controls.minPolarAngle = 0.0001;
+    controls.maxPolarAngle = Math.PI - 0.0001;
+    controls.minAzimuthAngle = -Infinity;
+    controls.maxAzimuthAngle = Infinity;
 
-// ------------------ WASD: walk by camera heading on the globe ------------------
-const CENTER = new THREE.Vector3(0, 0, 0);
-const pressed = new Set<string>();
-let moving = false;
-let lastT = performance.now();
+    // ------------------ WASD: walk by camera heading on the globe ------------------
+    const CENTER = new THREE.Vector3(0, 0, 0);
+    const pressed = new Set<string>();
+    let moving = false;
+    let lastT = performance.now();
 
-const SURFACE_SPEED = 200; // world units/sec along the surface
+    const SURFACE_SPEED = 200; // world units/sec along the surface
 
-// scratch
-const n = new THREE.Vector3();
-const screenUp = new THREE.Vector3();
-const screenRight = new THREE.Vector3();
-const fwdT = new THREE.Vector3();
-const rightT = new THREE.Vector3();
-const axis = new THREE.Vector3();
-const q = new THREE.Quaternion();
+    // scratch
+    const n = new THREE.Vector3();
+    const screenUp = new THREE.Vector3();
+    const screenRight = new THREE.Vector3();
+    const fwdT = new THREE.Vector3();
+    const rightT = new THREE.Vector3();
+    const axis = new THREE.Vector3();
+    const q = new THREE.Quaternion();
 
-function onKeyDown(e: KeyboardEvent) {
-  const k = e.key.toLowerCase();
-  if ([" "].includes(k)) e.preventDefault();
-  pressed.add(k);
-  startMoveLoop();
-}
-function onKeyUp(e: KeyboardEvent) {
-  pressed.delete(e.key.toLowerCase());
-}
-
-function startMoveLoop() {
-  if (moving) return;
-  moving = true;
-  lastT = performance.now();
-
-  const step = () => {
-    if (!moving) return;
-    if (pressed.size === 0) { moving = false; return; }
-
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - lastT) / 1000);
-    lastT = now;
-
-    // local radial up at current spot
-    n.copy(camera.position).sub(CENTER).normalize();
-
-    // camera’s screen axes in world space
-    screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-    screenRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-
-    // project them onto the tangent plane (remove vertical component along n)
-    fwdT.copy(screenUp).addScaledVector(n, -screenUp.dot(n)).normalize();
-    rightT.copy(screenRight).addScaledVector(n, -screenRight.dot(n)).normalize();
-
-    // if fwdT got tiny (rare, e.g. extreme roll), fall back to right vector
-    if (fwdT.lengthSq() < 1e-8) {
-      fwdT.copy(rightT);
-      rightT.crossVectors(fwdT, n).normalize();
+    function onKeyDown(e: KeyboardEvent) {
+      const k = e.key.toLowerCase();
+      if ([" "].includes(k)) e.preventDefault();
+      pressed.add(k);
+      startMoveLoop();
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      pressed.delete(e.key.toLowerCase());
     }
 
-    // combine keys into tangent direction
-    const dir = new THREE.Vector3();
-    if (pressed.has("w"))    dir.add(fwdT);
-    if (pressed.has("s"))  dir.sub(fwdT);
-    if (pressed.has("d")) dir.add(rightT);
-    if (pressed.has("a"))  dir.sub(rightT);
+    function startMoveLoop() {
+      if (moving) return;
+      moving = true;
+      lastT = performance.now();
 
-    // optional altitude: space up, shift down (purely radial)
-    const radial = (pressed.has(" ") ? +1 : 0) + (pressed.has("shift") ? -1 : 0);
+      const step = () => {
+        if (!moving) return;
+        if (pressed.size === 0) { moving = false; return; }
 
-    let didMove = false;
+        const now = performance.now();
+        const dt = Math.min(0.05, (now - lastT) / 1000);
+        lastT = now;
 
-    // walk the surface by rotating around axis = n × dir
-    if (dir.lengthSq() > 1e-10) {
-      dir.normalize();
-      const R = camera.position.distanceTo(CENTER);
-      const angle = (SURFACE_SPEED / Math.max(1e-6, R)) * dt; // radians = arc/R
-      axis.crossVectors(n, dir).normalize();
-      q.setFromAxisAngle(axis, angle);
-      camera.position.sub(CENTER).applyQuaternion(q).add(CENTER);
-      didMove = true;
+        // local radial up at current spot
+        n.copy(camera.position).sub(CENTER).normalize();
+
+        // camera’s screen axes in world space
+        screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        screenRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+
+        // project them onto the tangent plane (remove vertical component along n)
+        fwdT.copy(screenUp).addScaledVector(n, -screenUp.dot(n)).normalize();
+        rightT.copy(screenRight).addScaledVector(n, -screenRight.dot(n)).normalize();
+
+        // if fwdT got tiny (rare, e.g. extreme roll), fall back to right vector
+        if (fwdT.lengthSq() < 1e-8) {
+          fwdT.copy(rightT);
+          rightT.crossVectors(fwdT, n).normalize();
+        }
+
+        // combine keys into tangent direction
+        const dir = new THREE.Vector3();
+        if (pressed.has("w")) dir.add(fwdT);
+        if (pressed.has("s")) dir.sub(fwdT);
+        if (pressed.has("d")) dir.add(rightT);
+        if (pressed.has("a")) dir.sub(rightT);
+
+        // optional altitude: space up, shift down (purely radial)
+        const radial = (pressed.has(" ") ? +1 : 0) + (pressed.has("shift") ? -1 : 0);
+
+        let didMove = false;
+
+        // walk the surface by rotating around axis = n × dir
+        if (dir.lengthSq() > 1e-10) {
+          dir.normalize();
+          const R = camera.position.distanceTo(CENTER);
+          const angle = (SURFACE_SPEED / Math.max(1e-6, R)) * dt; // radians = arc/R
+          axis.crossVectors(n, dir).normalize();
+          q.setFromAxisAngle(axis, angle);
+          camera.position.sub(CENTER).applyQuaternion(q).add(CENTER);
+          didMove = true;
+        }
+
+        // altitude change (optional)
+        if (radial !== 0) {
+          const climb = (SURFACE_SPEED * 0.5) * dt * radial;
+          camera.position.add(n.clone().multiplyScalar(climb));
+          didMove = true;
+        }
+
+        if (didMove) {
+          controls.target.copy(CENTER); // keep pivot at center
+          camera.lookAt(controls.target);
+          startDampedRAF();
+        }
+
+        requestAnimationFrame(step);
+      };
+
+      requestAnimationFrame(step);
     }
 
-    // altitude change (optional)
-    if (radial !== 0) {
-      const climb = (SURFACE_SPEED * 0.5) * dt * radial;
-      camera.position.add(n.clone().multiplyScalar(climb));
-      didMove = true;
-    }
-
-    if (didMove) {
-      controls.target.copy(CENTER); // keep pivot at center
-      camera.lookAt(controls.target);
-      startDampedRAF();
-    }
-
-    requestAnimationFrame(step);
-  };
-
-  requestAnimationFrame(step);
-}
-
-window.addEventListener("keydown", onKeyDown, { passive: false });
-window.addEventListener("keyup", onKeyUp);
-// ---------------- end WASD ----------------
+    window.addEventListener("keydown", onKeyDown, { passive: false });
+    window.addEventListener("keyup", onKeyUp);
+    // ---------------- end WASD ----------------
 
 
-  // Initial render (no mesh yet)
-  renderOnce();
-
-  // Resize to parent
-  const ro = new ResizeObserver(() => {
-    const { w, h } = getSize();
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    // Initial render (no mesh yet)
     renderOnce();
-  });
-  ro.observe(host);
 
-  // Stash refs for reuse
-  rendererRef.current = renderer;
-  sceneRef.current = scene;
-  cameraRef.current = camera;
-  controlsRef.current = controls;
-  sunRef.current = sun;
-  roRef.current = ro;
+    // Resize to parent
+    const ro = new ResizeObserver(() => {
+      const { w, h } = getSize();
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderOnce();
+    });
+    ro.observe(host);
 
-  setEngineReady(true);
+    // Stash refs for reuse
+    rendererRef.current = renderer;
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+    sunRef.current = sun;
+    roRef.current = ro;
+
+    setEngineReady(true);
 
 
-  // Cleanup
-  return () => {
-    setEngineReady(false); 
-    stopped = true;
-    if (rafId != null) cancelAnimationFrame(rafId);
-    ro.disconnect();
-    controls.dispose();
+    // Cleanup
+    return () => {
+      setEngineReady(false);
+      stopped = true;
+      if (rafId != null) cancelAnimationFrame(rafId);
+      ro.disconnect();
+      controls.dispose();
 
-    window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
 
-    if (meshRef.current) {
-      (meshRef.current.geometry as THREE.BufferGeometry).dispose();
-      const m = meshRef.current.material as THREE.ShaderMaterial;
-      const tex = m.uniforms?.uTexture?.value as THREE.Texture | undefined;
-      if (tex) tex.dispose();
-      m.dispose();
-      meshRef.current = null;
-    }
-    if (meshRef2.current) {
-      (meshRef2.current.geometry as THREE.BufferGeometry).dispose();
-      const m2 = meshRef2.current.material as THREE.ShaderMaterial;
-      const tex2 = m2.uniforms?.uTexture?.value as THREE.Texture | undefined;
-      if (tex2) tex2.dispose();
-      m2.dispose();
-      meshRef2.current = null;
-    }
-    if (meshRef3.current) {
-      (meshRef3.current.geometry as THREE.BufferGeometry).dispose();
-      const m3 = meshRef3.current.material as THREE.ShaderMaterial;
-      const tex3 = m3.uniforms?.uTexture?.value as THREE.Texture | undefined;
-      if (tex3) tex3.dispose();
-      m3.dispose();
-      meshRef3.current = null;
-    }
-    if (uvPointsRef.current) {
-      if (uvGeoRef.current) uvGeoRef.current.dispose();
-      if (uvMatRef.current) uvMatRef.current.dispose();
-      if (uvTexRef.current) uvTexRef.current.dispose();
-      uvPointsRef.current = null;
-      uvGeoRef.current = null;
-      uvMatRef.current = null;
-      uvTexRef.current = null;
-      uvDimsRef.current = null;
-      if (readPositionRTRef.current) {
-        readPositionRTRef.current.dispose();
-        readPositionRTRef.current = null;
+      if (meshRef.current) {
+        (meshRef.current.geometry as THREE.BufferGeometry).dispose();
+        const m = meshRef.current.material as THREE.ShaderMaterial;
+        const tex = m.uniforms?.uTexture?.value as THREE.Texture | undefined;
+        if (tex) tex.dispose();
+        m.dispose();
+        meshRef.current = null;
       }
-      if (writePositionRTRef.current) {
-        writePositionRTRef.current.dispose();
-        writePositionRTRef.current = null;
+      if (meshRef2.current) {
+        (meshRef2.current.geometry as THREE.BufferGeometry).dispose();
+        const m2 = meshRef2.current.material as THREE.ShaderMaterial;
+        const tex2 = m2.uniforms?.uTexture?.value as THREE.Texture | undefined;
+        if (tex2) tex2.dispose();
+        m2.dispose();
+        meshRef2.current = null;
       }
-      simDimsRef.current = null;
-    }
-    renderer.dispose();
-    if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
-  
-    // elem.removeEventListener('mousemove', onMouseMove);
-    // restore controls.update if you like (optional in most apps)
-    // controls.update = _origUpdate;
-  };
-}, []);
+      if (meshRef3.current) {
+        (meshRef3.current.geometry as THREE.BufferGeometry).dispose();
+        const m3 = meshRef3.current.material as THREE.ShaderMaterial;
+        const tex3 = m3.uniforms?.uTexture?.value as THREE.Texture | undefined;
+        if (tex3) tex3.dispose();
+        m3.dispose();
+        meshRef3.current = null;
+      }
+      if (uvPointsRef.current) {
+        if (uvGeoRef.current) uvGeoRef.current.dispose();
+        if (uvMatRef.current) uvMatRef.current.dispose();
+        if (uvTexRef.current) uvTexRef.current.dispose();
+        uvPointsRef.current = null;
+        uvGeoRef.current = null;
+        uvMatRef.current = null;
+        uvTexRef.current = null;
+        uvDimsRef.current = null;
+        if (readPositionRTRef.current) {
+          readPositionRTRef.current.dispose();
+          readPositionRTRef.current = null;
+        }
+        if (writePositionRTRef.current) {
+          writePositionRTRef.current.dispose();
+          writePositionRTRef.current = null;
+        }
+        simDimsRef.current = null;
+      }
+      renderer.dispose();
+      if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
+
+      // elem.removeEventListener('mousemove', onMouseMove);
+      // restore controls.update if you like (optional in most apps)
+      // controls.update = _origUpdate;
+    };
+  }, []);
 
   useEffect(() => {
     const renderer = rendererRef.current;
-    const scene    = sceneRef.current;
-    const camera   = cameraRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
     const controls = controlsRef.current;
-    
+
     if (!renderer || !scene || !camera || !controls) return;
-  
+
     const clock = new THREE.Clock();
     let running = true;
     const simTimeElapsed = 0;
     const simTimeStep = 3000;
     const simTimeLimit = 1_000_000_000_000;
-  
+
 
 
     // IMPLEMENT TIMING LOGIC AS SHOWN HERE FOR THE SIMS!
-  //   const loop = () => {
-  //     if (!running) return;
-  //     const dt = clock.getDelta();
+    //   const loop = () => {
+    //     if (!running) return;
+    //     const dt = clock.getDelta();
 
-  //     // 0) stash current viewport/scissor state
-  //     const prevViewport = new THREE.Vector4();
-  //     const prevScissor  = new THREE.Vector4();
-  //     const prevScissorTest = renderer.getScissorTest();
-  //     renderer.getViewport(prevViewport);   // x,y,w,h
-  //     renderer.getScissor(prevScissor);     // x,y,w,h
+    //     // 0) stash current viewport/scissor state
+    //     const prevViewport = new THREE.Vector4();
+    //     const prevScissor  = new THREE.Vector4();
+    //     const prevScissorTest = renderer.getScissorTest();
+    //     renderer.getViewport(prevViewport);   // x,y,w,h
+    //     renderer.getScissor(prevScissor);     // x,y,w,h
 
-  //     // --- SIM UPDATE: render into small RT (no feedback-loop) ---
-  //     simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
-  //     if (simTimeElapsed < simTimeLimit){
-  //       simMat.uniforms.uDt.value   = simTimeStep;
-  //       simTimeElapsed += simTimeStep;
-  //     } else {
-  //       simMat.uniforms.uDt.value = 0;
-  //     }
-      
-  //     const rt = writePositionRTRef.current!;
-  //     renderer.setRenderTarget(writePositionRTRef.current!);
-  //     renderer.setViewport(0, 0, outWRef.current, outHRef.current);
-  //     renderer.clear();
-  //     renderer.setScissorTest(false);
-  //     renderer.render(simScene, simCam);
-  //     renderer.setRenderTarget(null);
+    //     // --- SIM UPDATE: render into small RT (no feedback-loop) ---
+    //     simMat.uniforms.uPrev.value = readPositionRTRef.current!.texture;
+    //     if (simTimeElapsed < simTimeLimit){
+    //       simMat.uniforms.uDt.value   = simTimeStep;
+    //       simTimeElapsed += simTimeStep;
+    //     } else {
+    //       simMat.uniforms.uDt.value = 0;
+    //     }
 
-  //     // 1) restore viewport/scissor EXACTLY as they were
-  //     renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-  //     renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
-  //     renderer.setScissorTest(prevScissorTest);
+    //     const rt = writePositionRTRef.current!;
+    //     renderer.setRenderTarget(writePositionRTRef.current!);
+    //     renderer.setViewport(0, 0, outWRef.current, outHRef.current);
+    //     renderer.clear();
+    //     renderer.setScissorTest(false);
+    //     renderer.render(simScene, simCam);
+    //     renderer.setRenderTarget(null);
 
-  //     // --- SWAP ---
-  //     const tmp = readPositionRTRef.current!;
-  //     readPositionRTRef.current = writePositionRTRef.current!;
-  //     writePositionRTRef.current = tmp;
+    //     // 1) restore viewport/scissor EXACTLY as they were
+    //     renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+    //     renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
+    //     renderer.setScissorTest(prevScissorTest);
 
-  //     // make points sample the latest
-  //     ptsMat.uniforms.uCurrentPosition.value = readPositionRTRef.current.texture;
+    //     // --- SWAP ---
+    //     const tmp = readPositionRTRef.current!;
+    //     readPositionRTRef.current = writePositionRTRef.current!;
+    //     writePositionRTRef.current = tmp;
 
-  //     // --- render your visible scene as usual ---
-  //     controls.update();
-  //     renderer.render(scene, camera);
+    //     // make points sample the latest
+    //     ptsMat.uniforms.uCurrentPosition.value = readPositionRTRef.current.texture;
 
-  //     requestAnimationFrame(loop);
-  //   };
-  
-  //   requestAnimationFrame(loop);
-  //   return () => { running = false; };
+    //     // --- render your visible scene as usual ---
+    //     controls.update();
+    //     renderer.render(scene, camera);
 
-function debugTrailRT(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget) {
-  const w = rt.width, h = rt.height;
-  const buf = new Uint8Array(w * h * 4);
+    //     requestAnimationFrame(loop);
+    //   };
 
-  // read pixels
-  renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+    //   requestAnimationFrame(loop);
+    //   return () => { running = false; };
 
-  let zeroCount = 0;
-  const total = w * h;
+    function debugTrailRT(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget) {
+      const w = rt.width, h = rt.height;
+      const buf = new Uint8Array(w * h * 4);
 
-  for (let i = 0; i < total; i++) {
-    const r = buf[i * 4 + 0];
-    const g = buf[i * 4 + 1];
-    const b = buf[i * 4 + 2];
-    const a = buf[i * 4 + 3];
-    if (r === 1 && g === 1 && b === 1 && a === 1) {
-      zeroCount++;
+      // read pixels
+      renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+
+      let zeroCount = 0;
+      const total = w * h;
+
+      for (let i = 0; i < total; i++) {
+        const r = buf[i * 4 + 0];
+        const g = buf[i * 4 + 1];
+        const b = buf[i * 4 + 2];
+        const a = buf[i * 4 + 3];
+        if (r === 1 && g === 1 && b === 1 && a === 1) {
+          zeroCount++;
+        }
+      }
+
+      const pct = (zeroCount / total * 100).toFixed(2);
+      console.log(`trailRT zeros: ${zeroCount}/${total} (${pct}%)`);
     }
-  }
 
-  const pct = (zeroCount / total * 100).toFixed(2);
-  console.log(`trailRT zeros: ${zeroCount}/${total} (${pct}%)`);
-}
+    const loop = () => {
+      if (!running) return;
 
-  const loop = () => {
-  if (!running) return;
+      // stash viewport/scissor once
+      const prevViewport = new THREE.Vector4();
+      const prevScissor = new THREE.Vector4();
+      const prevScissorTest = renderer.getScissorTest();
+      renderer.getViewport(prevViewport);
+      renderer.getScissor(prevScissor);
 
-  // stash viewport/scissor once
-  const prevViewport = new THREE.Vector4();
-  const prevScissor  = new THREE.Vector4();
-  const prevScissorTest = renderer.getScissorTest();
-  renderer.getViewport(prevViewport);
-  renderer.getScissor(prevScissor);
-
-  for (const L of windLayersSetRef.current) {
-    // advance each sim
-    L.simMat.uniforms.uPrev.value = L.readRT.texture;
-    L.simMat.uniforms.uDt.value   = simTimeStep; // or your timing logic
-    renderer.setRenderTarget(L.writeRT);
-    renderer.setViewport(0, 0, L.outW, L.outH);
-    renderer.setScissorTest(false);
-    renderer.clear();
-    renderer.render(L.simScene, L.simCam);
-    renderer.setRenderTarget(null);
-
-    // swap
-    const tmp = L.readRT;
-    L.readRT = L.writeRT;
-    L.writeRT = tmp;
-
-    // points sample the latest
-    L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
-
-    // -- copy + stamp into the SAME RT without clearing between them
-// const prevAC = renderer.autoClear;
-// renderer.autoClear = false;
-
-    // copy pass
-    L.decayMat.uniforms.uSrc.value = L.trailReadRT.texture;
-    renderer.setRenderTarget(L.trailWriteRT);
-// renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
-// renderer.setScissorTest(false);
-renderer.clear();
-renderer.render(L.decayScene, L.decayCam);
+      for (const L of windLayersSetRef.current) {
+        // advance each sim
+        L.simMat.uniforms.uPrev.value = L.readRT.texture;
+        L.simMat.uniforms.uDt.value = simTimeStep; // or your timing logic
+        renderer.setRenderTarget(L.writeRT);
+        renderer.setViewport(0, 0, L.outW, L.outH);
+        renderer.setScissorTest(false);
+        renderer.clear();
+        renderer.render(L.simScene, L.simCam);
+        renderer.setRenderTarget(null);
 
         // swap
-    // const t1 = L.trailReadRT;
-    // L.trailReadRT = L.trailWriteRT;
-    // L.trailWriteRT = t1;
+        const tmp = L.readRT;
+        L.readRT = L.writeRT;
+        L.writeRT = tmp;
 
-// --- draw particles into trailRT as white dots ---
-renderer.setRenderTarget(L.trailWriteRT);
-renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
-renderer.setScissorTest(false);
+        // points sample the latest
+        L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
-// keep both materials sampling the latest positions texture
-L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
-L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+        // -- copy + stamp into the SAME RT without clearing between them
+        // const prevAC = renderer.autoClear;
+        // renderer.autoClear = false;
 
-renderer.setRenderTarget(L.trailWriteRT);
-renderer.setScissorTest(false);
-L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture;
-renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
+        // copy pass
+        L.decayMat.uniforms.uSrc.value = L.trailReadRT.texture;
+        renderer.setRenderTarget(L.trailWriteRT);
+        // renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
+        // renderer.setScissorTest(false);
+        renderer.clear();
+        renderer.render(L.decayScene, L.decayCam);
 
-// renderer.autoClear = prevAC;
+        // swap
+        // const t1 = L.trailReadRT;
+        // L.trailReadRT = L.trailWriteRT;
+        // L.trailWriteRT = t1;
 
-    // swap
-    const t = L.trailReadRT;
-    L.trailReadRT = L.trailWriteRT;
-    L.trailWriteRT = t;
+        // --- draw particles into trailRT as white dots ---
+        renderer.setRenderTarget(L.trailWriteRT);
+        renderer.setViewport(0, 0, L.trailWriteRT.width, L.trailWriteRT.height);
+        renderer.setScissorTest(false);
 
-    L.trailOverlayMat.uniforms.uTrailTex.value = L.trailReadRT.texture;
+        // keep both materials sampling the latest positions texture
+        L.ptsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+        L.trailPtsMat.uniforms.uCurrentPosition.value = L.readRT.texture;
 
-// return to default framebuffer
-  renderer.setRenderTarget(null);
-  }
+        renderer.setRenderTarget(L.trailWriteRT);
+        renderer.setScissorTest(false);
+        L.trailStampMat.uniforms.uCurrentPosition.value = L.readRT.texture;
+        renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
 
-  // restore viewport/scissor exactly
-  renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-  renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
-  renderer.setScissorTest(prevScissorTest);
+        // renderer.autoClear = prevAC;
 
-  controls.update();
-  renderer.render(scene, camera);
+        // swap
+        const t = L.trailReadRT;
+        L.trailReadRT = L.trailWriteRT;
+        L.trailWriteRT = t;
 
-  requestAnimationFrame(loop);
-  };
+        L.trailOverlayMat.uniforms.uTrailTex.value = L.trailReadRT.texture;
+
+        // return to default framebuffer
+        renderer.setRenderTarget(null);
+      }
+
+      // restore viewport/scissor exactly
+      renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+      renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
+      renderer.setScissorTest(prevScissorTest);
+
+      controls.update();
+      renderer.render(scene, camera);
 
       requestAnimationFrame(loop);
+    };
+
+    requestAnimationFrame(loop);
     return () => { running = false; };
 
-    }, [
+  }, [
     // restart the loop if these change materially
     heightTexVersion,
     uvDimsRef.current?.w,
@@ -1150,246 +1150,246 @@ renderer.render(L.trailStampScene, L.trailStampCam); // ✅ UV-space
   ]);
 
   const handleLandTex = useCallback((tex: THREE.Texture) => {
-  landTexRef.current = tex;
-  // optionally bump a version if you *need* to react elsewhere
-  // setLandTexVersion(v => v + 1);
-}, []);
+    landTexRef.current = tex;
+    // optionally bump a version if you *need* to react elsewhere
+    // setLandTexVersion(v => v + 1);
+  }, []);
 
-useEffect(() => {
-  // Seed only missing keys (does not overwrite user/persisted choices)
-  Features.seed({
-    [FEAT.CLOUD_850]: true,
-    [FEAT.WIND_850]:  true,
-    // add any other first-load “on” defaults here
-    // [FEAT.GPH_500]: true,
-  });
-}, []);
+  useEffect(() => {
+    // Seed only missing keys (does not overwrite user/persisted choices)
+    Features.seed({
+      [FEAT.CLOUD_850]: true,
+      [FEAT.WIND_850]: true,
+      // add any other first-load “on” defaults here
+      // [FEAT.GPH_500]: true,
+    });
+  }, []);
 
-useEffect(() => {
-  if (!engineReady) return;
-  const disposers: Array<() => void> = [];
+  useEffect(() => {
+    if (!engineReady) return;
+    const disposers: Array<() => void> = [];
 
-// PaneHub registration
-disposers.push(
-  // Clouds
-  PaneHub.bindFlag("Cloud Layers", "250 hPa", FEAT.CLOUD_250, false),
-  PaneHub.bindFlag("Cloud Layers", "500 hPa", FEAT.CLOUD_500, false),
-  PaneHub.bindFlag("Cloud Layers", "850 hPa", FEAT.CLOUD_850, false),
+    // PaneHub registration
+    disposers.push(
+      // Clouds
+      PaneHub.bindFlag("Cloud Layers", "250 hPa", FEAT.CLOUD_250, false),
+      PaneHub.bindFlag("Cloud Layers", "500 hPa", FEAT.CLOUD_500, false),
+      PaneHub.bindFlag("Cloud Layers", "850 hPa", FEAT.CLOUD_850, false),
 
-  // Geopotential Height Mesh
-  PaneHub.bindFlag("Geopotential Height Mesh", "250 hPa", FEAT.GPH_250, false),
-  PaneHub.bindFlag("Geopotential Height Mesh", "500 hPa", FEAT.GPH_500, false),
-  PaneHub.bindFlag("Geopotential Height Mesh", "850 hPa", FEAT.GPH_850, false),
+      // Geopotential Height Mesh
+      PaneHub.bindFlag("Geopotential Height Mesh", "250 hPa", FEAT.GPH_250, false),
+      PaneHub.bindFlag("Geopotential Height Mesh", "500 hPa", FEAT.GPH_500, false),
+      PaneHub.bindFlag("Geopotential Height Mesh", "850 hPa", FEAT.GPH_850, false),
 
-  // Wind Particles
-  PaneHub.bindFlag("Wind Particles", "250 hPa", FEAT.WIND_250, false),
-  PaneHub.bindFlag("Wind Particles", "500 hPa", FEAT.WIND_500, false),
-  PaneHub.bindFlag("Wind Particles", "850 hPa", FEAT.WIND_850, false),
+      // Wind Particles
+      PaneHub.bindFlag("Wind Particles", "250 hPa", FEAT.WIND_250, false),
+      PaneHub.bindFlag("Wind Particles", "500 hPa", FEAT.WIND_500, false),
+      PaneHub.bindFlag("Wind Particles", "850 hPa", FEAT.WIND_850, false),
 
-    PaneHub.bindFlag("Base Layers", "Land Mask", FEAT.LAND_MASK, false),
-);
-
-
-  return () => disposers.forEach((d) => d());
-}, [engineReady]);
+      PaneHub.bindFlag("Base Layers", "Land Mask", FEAT.LAND_MASK, false),
+    );
 
 
-const handleGph250 = useCallback((tex: THREE.Texture) => {
-  heightTexRef.current = tex;
-  setHeightTexVersion(v => v + 1);
-}, []);
-
-const handleGph500 = useCallback((tex: THREE.Texture) => {
-  heightTexRef2.current = tex;
-  setHeightTexVersion2(v => v + 1);
-}, []);
-
-const handleGph850 = useCallback((tex: THREE.Texture) => {
-  heightTexRef3.current = tex;
-  setHeightTexVersion3(v => v + 1);
-}, []);
+    return () => disposers.forEach((d) => d());
+  }, [engineReady]);
 
 
-const handleWindReady = useCallback((api: WindLayerAPI) => {
-  windLayersSetRef.current.add(api);
-}, []);
+  const handleGph250 = useCallback((tex: THREE.Texture) => {
+    heightTexRef.current = tex;
+    setHeightTexVersion(v => v + 1);
+  }, []);
 
-const handleWindRemove = useCallback((api: WindLayerAPI) => {
-  windLayersSetRef.current.delete(api);
-}, []);
+  const handleGph500 = useCallback((tex: THREE.Texture) => {
+    heightTexRef2.current = tex;
+    setHeightTexVersion2(v => v + 1);
+  }, []);
 
-// Feature flag hooks
-const cloud250On = useFeatureFlag<boolean>(FEAT.CLOUD_250, false);
-const cloud500On = useFeatureFlag<boolean>(FEAT.CLOUD_500, false);
-const cloud850On = useFeatureFlag<boolean>(FEAT.CLOUD_850, false);
+  const handleGph850 = useCallback((tex: THREE.Texture) => {
+    heightTexRef3.current = tex;
+    setHeightTexVersion3(v => v + 1);
+  }, []);
 
-const gph250On = useFeatureFlag<boolean>(FEAT.GPH_250, false);
-const gph500On = useFeatureFlag<boolean>(FEAT.GPH_500, false);
-const gph850On = useFeatureFlag<boolean>(FEAT.GPH_850, false);
 
-const wind250On = useFeatureFlag<boolean>(FEAT.WIND_250, false);
-const wind500On = useFeatureFlag<boolean>(FEAT.WIND_500, false);
-const wind850On = useFeatureFlag<boolean>(FEAT.WIND_850, false);
+  const handleWindReady = useCallback((api: WindLayerAPI) => {
+    windLayersSetRef.current.add(api);
+  }, []);
+
+  const handleWindRemove = useCallback((api: WindLayerAPI) => {
+    windLayersSetRef.current.delete(api);
+  }, []);
+
+  // Feature flag hooks
+  const cloud250On = useFeatureFlag<boolean>(FEAT.CLOUD_250, false);
+  const cloud500On = useFeatureFlag<boolean>(FEAT.CLOUD_500, false);
+  const cloud850On = useFeatureFlag<boolean>(FEAT.CLOUD_850, false);
+
+  const gph250On = useFeatureFlag<boolean>(FEAT.GPH_250, false);
+  const gph500On = useFeatureFlag<boolean>(FEAT.GPH_500, false);
+  const gph850On = useFeatureFlag<boolean>(FEAT.GPH_850, false);
+
+  const wind250On = useFeatureFlag<boolean>(FEAT.WIND_250, false);
+  const wind500On = useFeatureFlag<boolean>(FEAT.WIND_500, false);
+  const wind850On = useFeatureFlag<boolean>(FEAT.WIND_850, false);
 
   const landMaskOn = useFeatureFlag<boolean>(FEAT.LAND_MASK, false);
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
-{engineReady && (
-  <>
-  
-{landMaskOn && (    <LandMaskLayer
-  landUrl={`/api/landmask`}
-  renderer={rendererRef.current}
-  scene={sceneRef.current}
-  camera={cameraRef.current}
-  // targets={[meshRef.current!, meshRef2.current!, meshRef3.current!]}
-  onTexture={handleLandTex}
-/>)}
+    {engineReady && (
+      <>
 
-          {wind250On && (<WindUvLayer
-        key={`uv-250-${datehour}-${heightTexVersion}`}
-        url={`/api/uv/250/${datehour}`}
-        renderer={rendererRef.current}
-        scene={sceneRef.current}
-        camera={cameraRef.current}
-        heightTex={heightTexRef.current}
-        pressureLevel={250}
-        exaggeration={exaggeration}
-        UV_POINTS_VERT={UV_POINTS_VERT}
-        UV_POINTS_FRAG={UV_POINTS_FRAG}
-        SIM_VERT={SIM_VERT}
-        SIM_FRAG={SIM_FRAG}
-  onReady={handleWindReady}
-  onRemove={handleWindRemove}
+        {landMaskOn && (<LandMaskLayer
+          landUrl={`/api/landmask`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          // targets={[meshRef.current!, meshRef2.current!, meshRef3.current!]}
+          onTexture={handleLandTex}
+        />)}
+
+        {wind250On && (<WindUvLayer
+          key={`uv-250-${datehour}-${heightTexVersion}`}
+          url={`/api/uv/250/${datehour}`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          heightTex={heightTexRef.current}
+          pressureLevel={250}
+          exaggeration={exaggeration}
+          UV_POINTS_VERT={UV_POINTS_VERT}
+          UV_POINTS_FRAG={UV_POINTS_FRAG}
+          SIM_VERT={SIM_VERT}
+          SIM_FRAG={SIM_FRAG}
+          onReady={handleWindReady}
+          onRemove={handleWindRemove}
         // zOffset={0}
-        /> )}
+        />)}
 
-          {wind500On && (<WindUvLayer
-        key={`uv-500-${datehour}-${heightTexVersion2}`}
-        url={`/api/uv/500/${datehour}`}
-        renderer={rendererRef.current}
-        scene={sceneRef.current}
-        camera={cameraRef.current}
-        heightTex={heightTexRef2.current}
-        pressureLevel={500}
-        exaggeration={exaggeration}
-        UV_POINTS_VERT={UV_POINTS_VERT}
-        UV_POINTS_FRAG={UV_POINTS_FRAG}
-        SIM_VERT={SIM_VERT}
-        SIM_FRAG={SIM_FRAG}
-  onReady={handleWindReady}
-  onRemove={handleWindRemove}
+        {wind500On && (<WindUvLayer
+          key={`uv-500-${datehour}-${heightTexVersion2}`}
+          url={`/api/uv/500/${datehour}`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          heightTex={heightTexRef2.current}
+          pressureLevel={500}
+          exaggeration={exaggeration}
+          UV_POINTS_VERT={UV_POINTS_VERT}
+          UV_POINTS_FRAG={UV_POINTS_FRAG}
+          SIM_VERT={SIM_VERT}
+          SIM_FRAG={SIM_FRAG}
+          onReady={handleWindReady}
+          onRemove={handleWindRemove}
         // zOffset={0.5}
         />)}
 
-            {wind850On && (<WindUvLayer
-        key={`uv-850-${datehour}-${heightTexVersion3}`}
-        url={`/api/uv/850/${datehour}`}
-        renderer={rendererRef.current}
-        scene={sceneRef.current}
-        camera={cameraRef.current}
-        heightTex={heightTexRef3.current}
-        pressureLevel={850}
-        exaggeration={exaggeration}
-        UV_POINTS_VERT={UV_POINTS_VERT}
-        UV_POINTS_FRAG={UV_POINTS_FRAG}
-        SIM_VERT={SIM_VERT}
-        SIM_FRAG={SIM_FRAG}
-  onReady={handleWindReady}
-  onRemove={handleWindRemove}
+        {wind850On && (<WindUvLayer
+          key={`uv-850-${datehour}-${heightTexVersion3}`}
+          url={`/api/uv/850/${datehour}`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          heightTex={heightTexRef3.current}
+          pressureLevel={850}
+          exaggeration={exaggeration}
+          UV_POINTS_VERT={UV_POINTS_VERT}
+          UV_POINTS_FRAG={UV_POINTS_FRAG}
+          SIM_VERT={SIM_VERT}
+          SIM_FRAG={SIM_FRAG}
+          onReady={handleWindReady}
+          onRemove={handleWindRemove}
         // zOffset={1.0}
         />)}
 
 
-      {gph250On && (<HeightMeshLayer
-      key={"gph-250"}
-  url={`/api/gph/250/${datehour}`}
-  renderer={rendererRef.current}
-  scene={sceneRef.current}
-  camera={cameraRef.current}
-  controls={controlsRef.current}
-  sun={sunRef.current}
-  VERT={VERT}
-  FRAG={FRAG}
-  landTexture={landTexRef.current}
-  pressureLevel={250}
-  exaggeration={exaggeration}
-  zOffset={0}
-  onTextureChange={handleGph250}
-/>)}
+        {gph250On && (<HeightMeshLayer
+          key={"gph-250"}
+          url={`/api/gph/250/${datehour}`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          controls={controlsRef.current}
+          sun={sunRef.current}
+          VERT={VERT}
+          FRAG={FRAG}
+          landTexture={landTexRef.current}
+          pressureLevel={250}
+          exaggeration={exaggeration}
+          zOffset={0}
+          onTextureChange={handleGph250}
+        />)}
 
-     {gph500On && ( <HeightMeshLayer
-     key={"gph-500"}
-  url={`/api/gph/500/${datehour}`}
-  renderer={rendererRef.current}
-  scene={sceneRef.current}
-  camera={cameraRef.current}
-  controls={controlsRef.current}
-  sun={sunRef.current}
-  VERT={VERT}
-  FRAG={FRAG}
-  landTexture={landTexRef.current}
-  pressureLevel={500}
-  exaggeration={exaggeration}
-  zOffset={0.5}
-  onTextureChange={handleGph500}
-/>)}
+        {gph500On && (<HeightMeshLayer
+          key={"gph-500"}
+          url={`/api/gph/500/${datehour}`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          controls={controlsRef.current}
+          sun={sunRef.current}
+          VERT={VERT}
+          FRAG={FRAG}
+          landTexture={landTexRef.current}
+          pressureLevel={500}
+          exaggeration={exaggeration}
+          zOffset={0.5}
+          onTextureChange={handleGph500}
+        />)}
 
-   {gph850On && ( <HeightMeshLayer
-   key={"gph-850"}
-  url={`/api/gph/850/${datehour}`}
-  renderer={rendererRef.current}
-  scene={sceneRef.current}
-  camera={cameraRef.current}
-  controls={controlsRef.current}
-  sun={sunRef.current}
-  VERT={VERT}
-  FRAG={FRAG}
-  landTexture={landTexRef.current}
-  pressureLevel={850}
-  exaggeration={exaggeration}
-  zOffset={1}
-  onTextureChange={handleGph850}
-/>)}
-</>
-)}
+        {gph850On && (<HeightMeshLayer
+          key={"gph-850"}
+          url={`/api/gph/850/${datehour}`}
+          renderer={rendererRef.current}
+          scene={sceneRef.current}
+          camera={cameraRef.current}
+          controls={controlsRef.current}
+          sun={sunRef.current}
+          VERT={VERT}
+          FRAG={FRAG}
+          landTexture={landTexRef.current}
+          pressureLevel={850}
+          exaggeration={exaggeration}
+          zOffset={1}
+          onTextureChange={handleGph850}
+        />)}
+      </>
+    )}
 
-        {cloud250On && (
-          <CloudCoverLayer
-            key={`cloud-250-${datehour}`}
-            url={`/api/cloud_cover/${datehour}`}
-            renderer={rendererRef.current}
-            scene={sceneRef.current}
-            camera={cameraRef.current}
-            controls={controlsRef.current}
-            pressureLevel={250}     // if your component accepts it
-          />
-        )}
+    {cloud250On && (
+      <CloudCoverLayer
+        key={`cloud-250-${datehour}`}
+        url={`/api/cloud_cover/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        controls={controlsRef.current}
+        pressureLevel={250}     // if your component accepts it
+      />
+    )}
 
-        {cloud500On && (
-          <CloudCoverLayer
-            key={`cloud-500-${datehour}`}
-            url={`/api/cloud_cover/${datehour}`}
-            renderer={rendererRef.current}
-            scene={sceneRef.current}
-            camera={cameraRef.current}
-            controls={controlsRef.current}
-            pressureLevel={500}     // if your component accepts it
-          />
-        )}
+    {cloud500On && (
+      <CloudCoverLayer
+        key={`cloud-500-${datehour}`}
+        url={`/api/cloud_cover/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        controls={controlsRef.current}
+        pressureLevel={500}     // if your component accepts it
+      />
+    )}
 
-        {cloud850On && (
-          <CloudCoverLayer
-            key={`cloud-850-${datehour}`}
-            url={`/api/cloud_cover/${datehour}`}
-            renderer={rendererRef.current}
-            scene={sceneRef.current}
-            camera={cameraRef.current}
-            controls={controlsRef.current}
-            pressureLevel={850}     // if your component accepts it
-          />
-        )}
+    {cloud850On && (
+      <CloudCoverLayer
+        key={`cloud-850-${datehour}`}
+        url={`/api/cloud_cover/${datehour}`}
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        controls={controlsRef.current}
+        pressureLevel={850}     // if your component accepts it
+      />
+    )}
 
-    </div>;
+  </div>;
 }
