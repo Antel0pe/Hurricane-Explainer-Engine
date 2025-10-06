@@ -74,3 +74,7 @@ future ideas:
 - day/night cycles
 - use nasa worldview satellite/other satellite images as sources for data?
     - might be better to pull underlying data if possible rather than satellite
+- finer resolution like hrrr
+- temperature as 3d mesh
+- tweakpane working with things like wind particle resolution -- UV_POINTS_STEP
+- modify shaders to get more tweak pane uniforms

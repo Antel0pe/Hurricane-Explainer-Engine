@@ -12,7 +12,7 @@ import { Features } from "./tweaks/FeatureBus";
 import { FEAT } from "./tweaks/Features";
 import { PaneHub } from "./tweaks/PaneHub";
 import { useFeatureFlag } from "./tweaks/FeatureBusHook";
-import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_shared_glsl } from "./ShadersLib";
+import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_shared_glsl, getWindMotionRangesPerPressureLevel } from "./ShadersLib";
 
 
 
@@ -72,6 +72,7 @@ const FRAG = `
   uniform vec2 uTexelSize;    // 1.0 / (texture width, height)
   uniform vec2 uUvToWorld;    // (aspect, 1.0) to scale UV steps to world XY
   uniform vec3 uLightDir;     // normalized light direction
+  uniform float uUseLandMask;  
 
   // Decode RGB24 to meters: elev_m = ((R<<16)|(G<<8)|B)*0.1 - 10000.0
   float decodeElevation(vec3 rgb) {
@@ -112,11 +113,13 @@ const FRAG = `
     float diffuse = 0.65 * lambert;
     vec3 color = base * (ambient + diffuse);
 
-    // Land mask: if land texture is black, force black output; if white, keep color
-    vec3 landRgb = texture2D(uLandTexture, vUv).rgb;
-    float landWhiteLevel = max(max(landRgb.r, landRgb.g), landRgb.b);
-    float isLand = step(0.5, 1.0 - landWhiteLevel);
-    color = mix(color, vec3(0.0), isLand * 1.0);
+    // Land mask (only if enabled)
+    if (uUseLandMask > 0.5) {
+      vec3 landRgb = texture2D(uLandTexture, vUv).rgb;
+      float landWhiteLevel = max(max(landRgb.r, landRgb.g), landRgb.b);
+      float isLand = step(0.5, 1.0 - landWhiteLevel);  // black=land, white=ocean
+      color = mix(color, vec3(0.0), isLand);
+    }
 
     gl_FragColor = vec4(color, 0.5);
   }
@@ -267,18 +270,20 @@ void main() {
 
 const SIM_FRAG = `
     ${LAT_LNG_TO_UV_CONVERSION}
+    ${getWindMotionRangesPerPressureLevel}
     precision highp float;
     in vec2 vUv;
     out vec4 fragColor;
 
     uniform sampler2D uPrev;
-    uniform float uDt, uSpeed;
+    uniform float uDt;
     uniform vec2  uSize;
     uniform sampler2D uWindTexture;
+    uniform float uPressure;
 
-    const float WIND_GAIN = 5.0;
-    const float L_TARGET = 10.0;
-    const float DIST_MIN = 0.05;
+    uniform float uWindGain;
+    uniform float uLifetimeTarget;
+    uniform float uMinDistancePerTimeStep;
 
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
     vec2 jitter(vec2 st){
@@ -288,11 +293,24 @@ const SIM_FRAG = `
     }
 
     vec2 sampleWindUV(vec2 uv) {
-      // wrap so we can step past edges cleanly
       uv = fract(uv);
+
+      // Read packed wind from texture
       vec2 rg = texture(uWindTexture, uv).rg;
-      // decode to signed and flip Y like before
-      return vec2(rg.r * 2.0 - 1.0, -(rg.g * 2.0 - 1.0));
+
+      // Pressure-aware ranges
+      float uMin, uMax, vMin, vMax;
+      getUVRange(uPressure, uMin, uMax, vMin, vMax);
+
+      // Decode to physical units (m/s)
+      float u_ms = mix(uMin, uMax, rg.r);
+      float v_ms = mix(vMin, vMax, rg.g);
+
+      // Plate-carrée convention used elsewhere: +V should be northward
+      // Your previous code had a minus on V (image-space vs geo). Keep that if needed:
+      v_ms = -v_ms;
+
+      return vec2(u_ms, v_ms);
     }
 
     void main() {
@@ -304,7 +322,7 @@ const SIM_FRAG = `
 
       // --- RK2 with physical advection ---
       // Step 1: sample wind at current pos (assumed m/s), convert to ΔUV over (0.5*dt)
-      vec2 wind1_ms = sampleWindUV(position) * WIND_GAIN;                // m/s
+      vec2 wind1_ms = sampleWindUV(position) * uWindGain;                // m/s
       float lat1_deg = latFromV(position.y);
       vec2 duv1 = deltaUV_from_ms(wind1_ms, lat1_deg, 0.5 * uDt);
 
@@ -312,7 +330,7 @@ const SIM_FRAG = `
       vec2 midPos = wrapClampUV(position + duv1);
 
       // Step 2: sample at midpoint and advance full dt with midpoint slope
-      vec2 wind2_ms = sampleWindUV(midPos) * WIND_GAIN;                  // m/s
+      vec2 wind2_ms = sampleWindUV(midPos) * uWindGain;                  // m/s
       // wind2_ms = vec2(-1,-1);
       float lat2_deg = latFromV(midPos.y);
       vec2 duv2 = deltaUV_from_ms(wind2_ms, lat2_deg, uDt);
@@ -320,8 +338,8 @@ const SIM_FRAG = `
       vec2 newPos = wrapClampUV(position + duv2);
       float lifeExpended = prev.a;
       float movedUV  = length(newPos - position);
-      float distanceParticleMoved = max(movedUV, DIST_MIN);
-      lifeExpended += distanceParticleMoved / L_TARGET;
+      float distanceParticleMoved = max(movedUV, uMinDistancePerTimeStep);
+      lifeExpended += distanceParticleMoved / uLifetimeTarget;
 
       bool particleIsDead = (totalLifeThreshold <= lifeExpended);
 
@@ -1256,6 +1274,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           VERT={VERT}
           FRAG={FRAG}
           landTexture={landTexRef.current}
+          useLandMask={landMaskOn} 
           pressureLevel={250}
           exaggeration={exaggeration}
           zOffset={1.5}
@@ -1273,6 +1292,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           VERT={VERT}
           FRAG={FRAG}
           landTexture={landTexRef.current}
+          useLandMask={landMaskOn} 
           pressureLevel={500}
           exaggeration={exaggeration}
           zOffset={1.0}
@@ -1290,6 +1310,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
           VERT={VERT}
           FRAG={FRAG}
           landTexture={landTexRef.current}
+          useLandMask={landMaskOn} 
           pressureLevel={850}
           exaggeration={exaggeration}
           zOffset={0.5}

@@ -28,6 +28,7 @@ type Props = {
 
   // uniforms
   landTexture: THREE.Texture | null; // uLandTexture
+  useLandMask?: boolean;
   pressureLevel: number; // uPressure
   exaggeration?: number; // uExaggeration
   zOffset?: number; // zOffset
@@ -51,6 +52,7 @@ export default function HeightMeshLayer({
   VERT,
   FRAG,
   landTexture,
+  useLandMask,
   pressureLevel,
   exaggeration,
   zOffset = 0,
@@ -63,6 +65,14 @@ export default function HeightMeshLayer({
   const matRef = useRef<THREE.ShaderMaterial | null>(null);
   const texRef = useRef<THREE.Texture | null>(null);
   const hasFramedRef = useRef(false);
+
+  const whiteTexRef = useRef<THREE.DataTexture | null>(null);
+  if (!whiteTexRef.current) {
+    const dt = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    dt.needsUpdate = true;
+    dt.colorSpace = THREE.NoColorSpace;
+    whiteTexRef.current = dt;
+  }
 
   useEffect(() => {
     if (!enabled) return;
@@ -78,10 +88,10 @@ export default function HeightMeshLayer({
         if (disposed) { texture.dispose(); return; }
 
         // texture params
-        texture.flipY = false;       
+        texture.flipY = false;
         texture.colorSpace = THREE.NoColorSpace;
         // texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapS = THREE.RepeatWrapping;  
+        texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
         texture.minFilter = THREE.NearestFilter;
         texture.magFilter = THREE.NearestFilter;
@@ -104,6 +114,7 @@ export default function HeightMeshLayer({
             uUvToWorld: { value: uvToWorld },
             uLightDir: { value: lightDir },
             uLandTexture: { value: landTexture },
+            uUseLandMask: { value: useLandMask ? 1.0 : 0.0 },
             uPressure: { value: pressureLevel },
             zOffset: { value: zOffset },
           },
@@ -141,7 +152,8 @@ export default function HeightMeshLayer({
           mat.uniforms.uLightDir.value = lightDir;
           mat.uniforms.uPressure.value = pressureLevel;
           mat.uniforms.zOffset.value = zOffset;
-          mat.uniforms.uLandTexture.value = landTexture;
+          mat.uniforms.uUseLandMask.value  = useLandMask ? 1.0 : 0.0;
+          mat.uniforms.uLandTexture.value  = (useLandMask && landTexture) ? landTexture : whiteTexRef.current;
 
           if (prevTex) prevTex.dispose();
           texRef.current = texture;
@@ -204,7 +216,7 @@ export default function HeightMeshLayer({
       texRef.current?.dispose();
       texRef.current = null;
     };
-  }, [enabled, url, renderer, scene, camera, controls, sun, landTexture, pressureLevel, exaggeration, zOffset, VERT, FRAG, autoFrameOnce]);
+  }, [enabled, url, renderer, scene, camera, controls, sun, landTexture, useLandMask, pressureLevel, exaggeration, zOffset, VERT, FRAG, autoFrameOnce]);
 
   return null; // side-effect layer only
 }

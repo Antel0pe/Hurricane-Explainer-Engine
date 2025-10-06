@@ -16,7 +16,7 @@ data/
 *.grib*
 *.nc
 
-*/venv
+**/venv
 # testing
 /coverage
 

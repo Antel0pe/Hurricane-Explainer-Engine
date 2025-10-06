@@ -285,15 +285,53 @@ export default function WindUvLayer({
               uniforms: {
                 uPrev: { value: rtRead.texture },
                 uDt: { value: 0 },
-                uSpeed: { value: 0.5 },
                 uSize: { value: new THREE.Vector2(outW, outH) },
                 uWindTexture: { value: texture },
+                uPressure: { value: pressureLevel },
+                uWindGain: { value: 0.2 },
+                uLifetimeTarget: { value: 8.0 },
+                uMinDistancePerTimeStep: { value: 0.05 },
               },
             });
             simScene.add(new THREE.Mesh(simGeom, simMat));
             simSceneRef.current = simScene;
             simCameraRef.current = simCam;
             simMatRef.current = simMat;
+
+            paneHubDisposeCleanup.push(PaneHub.bind(
+            `UV Points (${pressureLevel} hPa)`,
+            {
+              dt: {
+                type: "number",
+                uniform: "uDt",
+                min: 0,
+                max: 1,
+                step: 0.001,
+              },
+              windGain: {
+                type: "number",
+                uniform: "uWindGain",
+                min: 0.0,
+                max: 10.0,
+                step: 0.1,
+              },
+              lifetimeTarget: {
+                type: "number",
+                uniform: "uLifetimeTarget",
+                min: 0.0,
+                max: 20.0,
+                step: 0.1,
+              },
+              minDistancePerStep: {
+                type: "number",
+                uniform: "uMinDistancePerTimeStep",
+                min: 0.0,
+                max: 1.0,
+                step: 0.01,
+              },
+            },
+            simMat
+          ));
           } else {
             simMatRef.current!.uniforms.uPrev.value =
               writePositionRTRef.current!.texture;
@@ -417,7 +455,7 @@ export default function WindUvLayer({
             },
           });
           paneHubDisposeCleanup.push(PaneHub.bind(
-            "Trail Overlay",
+            `Trail Overlay ${pressureLevel}`,
             {
               opacity: {
                 type: "number",

@@ -1,8 +1,6 @@
 import io
 import os
-import argparse
 from datetime import datetime
-
 import numpy as np
 import xarray as xr
 from PIL import Image
@@ -22,7 +20,6 @@ def resolve_paths():
 def open_dataset(path: str) -> xr.Dataset:
     if not os.path.exists(path):
         raise FileNotFoundError(f"UV GRIB file not found: {path}")
-    # cfgrib engine handles GRIB; .grib path provided by user
     return xr.open_dataset(path, engine="cfgrib")
 
 
@@ -60,38 +57,46 @@ def to_minus180_180(lon_1d: np.ndarray, field_2d: np.ndarray):
     return lon_sorted, field_sorted
 
 
-def scale_to_255(a: np.ndarray) -> np.ndarray:
-    """Scale array to uint8 [0,255] using per-slice min-max. NaNs -> 0.
-
-    If the slice is constant or empty, return mid-gray (127) where finite, else 0.
+# ---- Fixed-range scaler ----
+def scale_fixed_range(a: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
+    """
+    Linearly scale array to uint8 [0,255] using a fixed [vmin, vmax] range.
+    NaNs -> 0. Values outside the range are clipped.
     """
     a = a.astype(np.float32)
-    mask = np.isfinite(a)
-    if not np.any(mask):
-        return np.zeros_like(a, dtype=np.uint8)
-    
-    # TO DO: this is inconsistent scale across multiple different hours
-    # if there is really high wind speed then every other wind will appear relatively slower
-    # there should be a fixed scale here for accurate comparison
-    vmin = float(np.min(a[mask]))
-    vmax = float(np.max(a[mask]))
-    if vmax <= vmin:
-        out = np.full_like(a, 127, dtype=np.uint8)
-        out[~mask] = 0
+    out = np.zeros_like(a, dtype=np.uint8)
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
         return out
     scaled = (a - vmin) / (vmax - vmin)
     scaled = np.clip(scaled * 255.0, 0.0, 255.0)
     out = scaled.astype(np.uint8)
-    out[~mask] = 0
+    out[~np.isfinite(a)] = 0
     return out
 
 
-def encode_uv_rg_png(u: np.ndarray, v: np.ndarray) -> bytes:
-    """Encode two fields into PNG with U in red and V in green; B=0, A=255."""
-    r = scale_to_255(u)
-    g = scale_to_255(v)
-    b = np.zeros_like(r, dtype=np.uint8)
+# ---- U/V fixed ranges by pressure level; Z fixed globally ----
+UV_RANGES_MPS = {
+    850: (-60.0, 60.0),
+    500: (-80.0, 80.0),
+    250: (-120.0, 120.0),
+}
+Z_RANGE_MPS = (-5.0, 5.0)
+
+
+def encode_uvz_rgb_png(u: np.ndarray, v: np.ndarray, z: np.ndarray, pressure_level: int) -> bytes:
+    """Encode U->R, V->G, Z->B (A=255) with fixed ranges."""
+    if pressure_level not in UV_RANGES_MPS:
+        raise ValueError(f"Unsupported pressure level for fixed ranges: {pressure_level}")
+
+    umin, umax = UV_RANGES_MPS[pressure_level]
+    vmin, vmax = UV_RANGES_MPS[pressure_level]
+    zmin, zmax = Z_RANGE_MPS
+
+    r = scale_fixed_range(u, umin, umax)
+    g = scale_fixed_range(v, vmin, vmax)
+    b = scale_fixed_range(z, zmin, zmax)
     a = np.full_like(r, 255, dtype=np.uint8)
+
     rgba = np.dstack([r, g, b, a])
     image = Image.fromarray(rgba, mode="RGBA")
     buf = io.BytesIO()
@@ -101,15 +106,18 @@ def encode_uv_rg_png(u: np.ndarray, v: np.ndarray) -> bytes:
 
 
 def main():
+    # --- inline config (no CLI) ---
     pressureLevel = 500
-    grib_path = "."
-    out_dir = "../data/uv_images/{pressureLevel}"
-    # _, _, grib_path, out_dir = resolve_paths()
+    grib_path = "."  # set to your GRIB path
+    out_dir = f"../data/uv_images/{pressureLevel}"
+    os.makedirs(out_dir, exist_ok=True)
+
     ds = open_dataset(grib_path)
 
-    # Select 500 hPa components
+    # Require all three: U, V, and W at the pressure level
     u_da = select_level_component(ds, "u", pressureLevel)
     v_da = select_level_component(ds, "v", pressureLevel)
+    w_da = select_level_component(ds, "w", pressureLevel)  # <-- REQUIRED; will raise if missing
 
     # Determine time coordinate
     if "time" in u_da.dims or "time" in u_da.coords:
@@ -123,14 +131,13 @@ def main():
     lat = u_da.latitude.values
     lon = u_da.longitude.values
 
-    # Normalize lon ordering for bounds/consistency and lat orientation (north->south rows)
-    # We'll apply the same transforms to each time slice
+    # Times
     times = u_da[time_coord].values
     if times.size == 0:
         print("No time steps found in dataset")
         return
 
-    # --- Happy path: fixed date window, hourly, inclusive ---
+    # Fixed date window
     start_np = np.datetime64("2017-08-01T00")
     end_np   = np.datetime64("2017-09-30T23")
     mask = (times >= start_np) & (times <= end_np)
@@ -138,8 +145,10 @@ def main():
     if selected_times.size == 0:
         t0 = np.datetime_as_string(times[0], unit="h")
         tN = np.datetime_as_string(times[-1], unit="h")
-        print(f"No times within happy-path window (2017-08-01T00 .. 2017-09-30T23). "
-              f"Dataset range is {t0} .. {tN}")
+        print(
+            f"No times within happy-path window (2017-08-01T00 .. 2017-09-30T23). "
+            f"Dataset range is {t0} .. {tN}"
+        )
         return
 
     t0 = np.datetime_as_string(times[0], unit="h")
@@ -162,23 +171,30 @@ def main():
         # Extract slices
         u_sl = u_da.sel({time_coord: np.datetime64(t)})
         v_sl = v_da.sel({time_coord: np.datetime64(t)})
+        w_sl = w_da.sel({time_coord: np.datetime64(t)})
+
         u_vals = u_sl.values.astype(np.float32)
         v_vals = v_sl.values.astype(np.float32)
+        w_vals = w_sl.values.astype(np.float32)
 
-        # Ensure 2D and consistent orientation
-        if u_vals.ndim != 2 or v_vals.ndim != 2:
-            raise RuntimeError("Unexpected data shape for UV slice; expected 2D lat-lon")
+        if u_vals.ndim != 2 or v_vals.ndim != 2 or w_vals.ndim != 2:
+            raise RuntimeError("Unexpected data shape; expected 2D lat-lon for u, v, and w")
 
+        # Normalize longitude and latitude orientation
         lon_u, u_fixed = to_minus180_180(lon, u_vals)
         lon_v, v_fixed = to_minus180_180(lon, v_vals)
-        # Sanity: both lon transforms should be identical
+        lon_w, w_fixed = to_minus180_180(lon, w_vals)
+
+        # Keep a consistent lon axis if small numeric differences arise
         if lon_u.shape != lon_fixed.shape or not np.allclose(lon_u, lon_fixed):
             lon_fixed = lon_u
+
         if flip_lat:
             u_fixed = u_fixed[::-1, :]
             v_fixed = v_fixed[::-1, :]
+            w_fixed = w_fixed[::-1, :]
 
-        png_bytes = encode_uv_rg_png(u_fixed, v_fixed)
+        png_bytes = encode_uvz_rgb_png(u_fixed, v_fixed, w_fixed, pressureLevel)
 
         with open(png_path, "wb") as f:
             f.write(png_bytes)
@@ -189,5 +205,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

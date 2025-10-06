@@ -58,3 +58,35 @@ export const GET_POSITION_Z_SHARED_GLSL3 = `
     return exaggeration * t;
   }
 `;
+
+export const getWindMotionRangesPerPressureLevel = `
+// tiny tolerance to avoid float == pitfalls
+const float WIND_PRESSURE_LEVEL_EPS = 0.5;
+
+void getUVRange(float pressure, out float minU, out float maxU, out float minV, out float maxV) {
+  // UV_RANGES_MPS:
+  //  850: (-60, 60)
+  //  500: (-80, 80)
+  //  250: (-120,120)
+  if (abs(pressure - 250.0) < WIND_PRESSURE_LEVEL_EPS) {
+    minU = -120.0; maxU = 120.0;
+    minV = -120.0; maxV = 120.0;
+  } else if (abs(pressure - 500.0) < WIND_PRESSURE_LEVEL_EPS) {
+    minU =  -80.0; maxU =  80.0;
+    minV =  -80.0; maxV =  80.0;
+  } else if (abs(pressure - 850.0) < WIND_PRESSURE_LEVEL_EPS) {
+    minU =  -60.0; maxU =  60.0;
+    minV =  -60.0; maxV =  60.0;
+  } else {
+    // fallback: conservative
+    minU = -80.0; maxU = 80.0;
+    minV = -80.0; maxV = 80.0;
+  }
+}
+
+void getZRange(out float minW, out float maxW) {
+  // Z_RANGE_MPS = (-5, 5)
+  minW = -5.0;
+  maxW =  5.0;
+}
+`
