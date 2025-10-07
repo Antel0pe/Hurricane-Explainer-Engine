@@ -90,3 +90,25 @@ void getZRange(out float minW, out float maxW) {
   maxW =  5.0;
 }
 `
+
+export const getTemperatureRangesPerPressureLevel = `
+// tiny tolerance to avoid float == pitfalls
+const float TEMP_PRESSURE_LEVEL_EPS = 0.5;
+
+void getTempRange(float pressure, out float minT, out float maxT) {
+  // TEMP_RANGES_C:
+  //  850: (-40, 35)
+  //  500: (-70, 0)
+  //  250: (-80, -25)
+  if (abs(pressure - 250.0) < TEMP_PRESSURE_LEVEL_EPS) {
+    minT = -80.0; maxT = -25.0;
+  } else if (abs(pressure - 500.0) < TEMP_PRESSURE_LEVEL_EPS) {
+    minT = -70.0; maxT =  0.0;
+  } else if (abs(pressure - 850.0) < TEMP_PRESSURE_LEVEL_EPS) {
+    minT = -40.0; maxT = 35.0;
+  } else {
+    // fallback: conservative global temperature range
+    minT = -80.0; maxT = 35.0;
+  }
+}
+`

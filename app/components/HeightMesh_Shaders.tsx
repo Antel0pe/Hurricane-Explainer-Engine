@@ -13,6 +13,7 @@ import { FEAT } from "./tweaks/Features";
 import { PaneHub } from "./tweaks/PaneHub";
 import { useFeatureFlag } from "./tweaks/FeatureBusHook";
 import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_shared_glsl, getWindMotionRangesPerPressureLevel } from "./ShadersLib";
+import TemperatureShellLayer from "./TemperatureShellLayer";
 
 
 
@@ -1147,6 +1148,11 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       PaneHub.bindFlag("Wind Particles", "500 hPa", FEAT.WIND_500, false),
       PaneHub.bindFlag("Wind Particles", "850 hPa", FEAT.WIND_850, false),
 
+      // Temperature
+      PaneHub.bindFlag("Temperature", "250 hPa", FEAT.TEMP_250, false),
+      PaneHub.bindFlag("Temperature", "500 hPa", FEAT.TEMP_500, false),
+      PaneHub.bindFlag("Temperature", "850 hPa", FEAT.TEMP_850, false),
+
       PaneHub.bindFlag("Base Layers", "Land Mask", FEAT.LAND_MASK, false),
     );
 
@@ -1193,6 +1199,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const wind850On = useFeatureFlag<boolean>(FEAT.WIND_850, false);
 
   const landMaskOn = useFeatureFlag<boolean>(FEAT.LAND_MASK, false);
+  
+  const temp250On = useFeatureFlag<boolean>(FEAT.TEMP_250, false);
+  const temp500On = useFeatureFlag<boolean>(FEAT.TEMP_500, false);
+  const temp850On = useFeatureFlag<boolean>(FEAT.TEMP_850, false);
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
@@ -1357,6 +1367,44 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         pressureLevel={850}     // if your component accepts it
       />
     )}
+
+    {temp250On && (<TemperatureShellLayer
+      key={`temp-shell-250-${datehour}`}
+      textureUrl={`/api/temperature/250/${datehour}`}  // the endpoint that returns your texture
+      pressure={250}                                         // single pressure level number
+      renderer={rendererRef.current}
+      scene={sceneRef.current}
+      camera={cameraRef.current}
+      controls={controlsRef.current}
+      sun={sunRef.current}                                   
+      enabled={true}
+      autoFrameOnce={true}
+    />)}
+    {temp500On && (<TemperatureShellLayer
+      key={`temp-shell-500-${datehour}`}
+      textureUrl={`/api/temperature/500/${datehour}`}  // the endpoint that returns your texture
+      pressure={500}                                         // single pressure level number
+      renderer={rendererRef.current}
+      scene={sceneRef.current}
+      camera={cameraRef.current}
+      controls={controlsRef.current}
+      sun={sunRef.current}                                   
+      enabled={true}
+      autoFrameOnce={true}
+    />)}
+    {temp850On && (<TemperatureShellLayer
+      key={`temp-shell-850-${datehour}`}
+      textureUrl={`/api/temperature/850/${datehour}`}  // the endpoint that returns your texture
+      pressure={850}                                         // single pressure level number
+      renderer={rendererRef.current}
+      scene={sceneRef.current}
+      camera={cameraRef.current}
+      controls={controlsRef.current}
+      sun={sunRef.current}                                   
+      enabled={true}
+      autoFrameOnce={true}
+    />)}
+
 
   </div>;
 }

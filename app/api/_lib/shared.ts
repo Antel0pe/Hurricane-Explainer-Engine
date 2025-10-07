@@ -35,6 +35,10 @@ export function cloudCoverPath() {
   return path.join(repoRoot(), DATA_FOLDER, "cloudCover");
 }
 
+export function temperatureDir(pressureLevel: string) {
+  return path.join(repoRoot(), DATA_FOLDER, "temperatureImages", String(pressureLevel));
+}
+
 export function parseDatehour(value: string): Date {
   const v = value.trim();
   // YYYYMMDDHH or YYYYMMDDHHMM

@@ -12,5 +12,9 @@ export const FEAT = {
   WIND_500: "wind_500",
   WIND_850: "wind_850",
 
-    LAND_MASK: "land_mask",
+  LAND_MASK: "land_mask",
+
+  TEMP_250: "temp_250",
+  TEMP_500: "temp_500",
+  TEMP_850: "temp_850",
 } as const;

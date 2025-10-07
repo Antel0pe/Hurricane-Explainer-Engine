@@ -78,3 +78,6 @@ future ideas:
 - temperature as 3d mesh
 - tweakpane working with things like wind particle resolution -- UV_POINTS_STEP
 - modify shaders to get more tweak pane uniforms
+- actually implement vertical wind motion according to era5
+- do sea surface temp similar to atmospheric temp
+- fix up the components such that when you switch the time, it doesnt erase everything on screen and render a new thing. basically properly update uniforms when a mat has already been created.
