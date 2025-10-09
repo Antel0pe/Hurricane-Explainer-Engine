@@ -683,102 +683,152 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       if (!animating) renderOnce();
     });
 
-    // ===== Hover-to-rotate (no mousedown) with light inertia =====
-    controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
+// ===== Hover-to-rotate (no mousedown) with light inertia =====
+controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
+controls.minPolarAngle = 0.0001;
+controls.maxPolarAngle = Math.PI - 0.0001;
+controls.minAzimuthAngle = -Infinity;
+controls.maxAzimuthAngle = Infinity;
 
-    // pull bounds from controls so your existing settings still apply
-    // const minAz = controls.minAzimuthAngle ?? -Infinity;
-    // const maxAz = controls.maxAzimuthAngle ??  Infinity;
-    // const minPh = controls.minPolarAngle   ??  0;
-    // const maxPh = controls.maxPolarAngle   ??  Math.PI;
+// Helper: recompute local frame, build F/R, make quaternion, and log
+function previewCameraOrientationFromYawPitch(yaw: number, pitch: number) {
+  // 1) Local frame at current camera position
+  const U = new THREE.Vector3().copy(camera.position).sub(CENTER).normalize(); // radial up
 
-    // const elem = renderer.domElement;
-    // const up   = camera.up.clone().normalize();
+  const ref = Math.abs(U.y) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const E = new THREE.Vector3().crossVectors(ref, U).normalize();             // east  (tangent)
+  const N = new THREE.Vector3().crossVectors(U, E).normalize();               // north (tangent)
 
-    // // Map camera.up -> +Y like OrbitControls does
-    // const quat = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
-    // const quatInv = quat.clone().invert();
+// 2) Yaw should spin around U at a chosen "band" of pitch.
+//    We "pretend" the pitch is pEff for yaw, then add the leftover pitch afterward.
 
-    // const spherical = new THREE.Spherical();
-    // const offset    = new THREE.Vector3();
+const pEff =
+  PITCH_FOR_YAW === 'useActual'
+    ? pitch
+    : THREE.MathUtils.degToRad(
+         PITCH_FOR_YAW
+      );
 
-    // // mouse→angle scaling similar to OrbitControls
-    // const ROTATE_SPEED = controls.rotateSpeed; // default 1.0
-    // const scale = (px: number) => (2 * Math.PI * px / elem.clientHeight) * ROTATE_SPEED;
+// (a) pre-tilt base forward to the effective band (around original E)
+const N_p = new THREE.Vector3().copy(N).applyAxisAngle(E, pEff);
 
-    // // simple inertia to mimic damping
-    // let vTheta = 0, vPhi = 0;           // angular velocity
-    // const INERTIA = 0.10;               // 0..1 (higher = more glide)
-    // const GAIN    = 0.5;               // 0..1 (how much new mouse delta feeds in)
+// (b) yaw around gravity U at that band
+const F_yaw = new THREE.Vector3().copy(N_p).applyAxisAngle(U, yaw);
 
-    // const onMouseMove = (e: MouseEvent) => {
-    //   if (e.target !== elem) return;
-    //   const dx = (e.movementX ?? 0);
-    //   const dy = (e.movementY ?? 0);
+// (c) compute the yawed East (ears axis) to apply the *leftover* pitch
+const yawQ  = new THREE.Quaternion().setFromAxisAngle(U, yaw);
+const E_yaw = new THREE.Vector3().copy(E).applyQuaternion(yawQ);
 
-    //   // accumulate desired angular velocity from mouse deltas
-    //   vTheta += -scale(dx) * GAIN; // azimuth (left/right)
-    //   vPhi   += -scale(dy) * GAIN; // polar   (up/down)
+// (d) apply only the remainder of the pitch so final pitch = pEff + (pitch - pEff) = pitch
+const F = F_yaw.applyAxisAngle(E_yaw, (pitch - pEff)).normalize();
 
-    //   startDampedRAF(); // use your existing RAF kicker
-    // };
 
-    // apply the velocity each frame, decay with inertia, clamp, and reposition camera
-    // const applyOrbitStep = () => {
-    //   // 1) current offset in Y-up space
-    //   offset.copy(camera.position).sub(controls.target).applyQuaternion(quat);
-    //   spherical.setFromVector3(offset);
+// 3) Build a no-roll basis *around* the pitched F (keep F as-is)
+const G = U; // gravity (local radial up)
+const R = new THREE.Vector3().copy(F).cross(G).normalize();     // sideways, level w.r.t gravity
+const U_cam = new THREE.Vector3().copy(R).cross(F).normalize(); // camera up, orthogonal to F & R
 
-    //   // 2) integrate velocity
-    //   spherical.theta += vTheta;
-    //   spherical.phi   += vPhi;
+// 4) Convert {R, U_cam, F} -> quaternion (camera looks down -Z, so Z = -F)
+const Z = new THREE.Vector3().copy(F).negate();
+const rot = new THREE.Matrix4().makeBasis(R, U_cam, Z);
+const qCam = new THREE.Quaternion().setFromRotationMatrix(rot);
 
-    //   // 3) clamp to OrbitControls-style limits
-    //   spherical.theta = Math.max(minAz, Math.min(maxAz, spherical.theta));
-    //   spherical.phi   = Math.max(minPh, Math.min(maxPh, spherical.phi));
 
-    //   // 4) write back position (preserve radius)
-    //   offset.setFromSpherical(spherical).applyQuaternion(quatInv);
-    //   camera.position.copy(controls.target).add(offset);
-    //   camera.lookAt(controls.target);
+  // 5) Log sanity info
+const dots = {
+  F_dot_U:   +F.dot(U).toFixed(3),      // should match your [Mouse Preview] f_dot_u
+  Ucam_dot_U:+U_cam.dot(U).toFixed(3),  // ~1 (camera up aligns with gravity projection)
+  R_len:     +R.length().toFixed(3),    // ~1
+  F_len:     +F.length().toFixed(3),    // ~1
+};
 
-    //   // 5) decay velocity (inertia)
-    //   vTheta *= INERTIA;
-    //   vPhi   *= INERTIA;
 
-    //   // let OrbitControls dispatch 'change' listeners (your render loop listens to controls.update())
-    //   controls.dispatchEvent({ type: 'change' });
-    // };
+  console.log(
+    "[Preview Cam Basis]",
+    "yaw°", THREE.MathUtils.radToDeg(yaw).toFixed(1),
+    "pitch°", THREE.MathUtils.radToDeg(pitch).toFixed(1),
+    "\n U", U.toArray(),
+    "\n E", E.toArray(),
+    "\n N", N.toArray(),
+    "\n F", F.toArray(),
+    "\n R", R.toArray(),
+    "\n quat", [qCam.x, qCam.y, qCam.z, qCam.w].map(v => +v.toFixed(6)),
+    "\n dots", dots
+  );
 
-    // hook our step into your damped RAF loop
-    // const _origUpdate = controls.update.bind(controls) as () => boolean;
-    // controls.update = (): boolean => {
-    //   // first, apply our orbit step so camera is up-to-date
-    //   applyOrbitStep();
-    //   // then run the normal OrbitControls update (handles zoom limits, etc.)
-    //   return _origUpdate();
-    // };
+  // Return in case you want to use it next step (not applying now)
+  return { U, E, N, F, R, qCam };
+}
 
-    // elem.addEventListener('mousemove', onMouseMove);
 
-    // keep wheel zoom & pan working, avoid double-rotate on drag
-    // controls.mouseButtons = {
-    //   LEFT: THREE.MOUSE.PAN,
-    //   MIDDLE: THREE.MOUSE.DOLLY,
-    //   RIGHT: THREE.MOUSE.PAN,
-    // };
+// ---- add this block: preview yaw/pitch from mouse, no camera change ----
+const elem = renderer.domElement;
 
-    // // Request pointer lock when clicking the canvas
-    // elem.addEventListener("click", () => {
-    //   if (document.pointerLockElement !== elem) {
-    //     elem.requestPointerLock({ unadjustedMovement: true });
-    //   }
-    // });
+// --- pointer lock helpers ---
+function onPointerLockChange() {
+  const locked = document.pointerLockElement === elem;
 
-    controls.minPolarAngle = 0.0001;
-    controls.maxPolarAngle = Math.PI - 0.0001;
-    controls.minAzimuthAngle = -Infinity;
-    controls.maxAzimuthAngle = Infinity;
+  // Visual hint
+  elem.style.cursor = locked ? "none" : "grab";
+
+  // Only track mouse when locked
+  if (locked) {
+    elem.addEventListener("mousemove", onMouseMove);
+    // kick render loop in case user locked while standing still
+    startDampedRAF();
+  } else {
+    elem.removeEventListener("mousemove", onMouseMove);
+  }
+}
+
+function onPointerLockError() {
+  console.warn("[PointerLock] request failed (browser/permission)");
+}
+
+// Click to lock (or right after a key press if you prefer)
+function onCanvasClick(e: MouseEvent) {
+  // optional: left button only
+  if (e.button === 0) {
+    // Required by some browsers: must be in a user gesture handler
+    elem.requestPointerLock();
+  }
+}
+
+// Optional: provide a manual release shortcut in addition to Esc
+function onReleaseKey(e: KeyboardEvent) {
+  // Esc already works automatically; this is just a manual override on 'q'
+  if (e.key.toLowerCase() === "q" && document.pointerLockElement === elem) {
+    document.exitPointerLock();
+  }
+}
+
+// Hook up events
+elem.addEventListener("click", onCanvasClick);
+document.addEventListener("pointerlockchange", onPointerLockChange);
+document.addEventListener("pointerlockerror", onPointerLockError);
+window.addEventListener("keydown", onReleaseKey);
+
+function onMouseMove(e: MouseEvent) {
+  // 1) integrate yaw/pitch from mouse deltas (no frame-time scaling on purpose)
+  const dx = e.movementX || 0;
+  const dy = e.movementY || 0;
+  yaw += dx * MOUSE_SENS;
+  pitch = THREE.MathUtils.clamp(pitch - dy * MOUSE_SENS, -PITCH_MAX, PITCH_MAX);
+
+    // Build camera basis & quaternion from current yaw/pitch at THIS position
+  const { F, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
+
+  // 1) Apply orientation
+  camera.quaternion.copy(qCam);
+
+  // 2) Keep OrbitControls happy: aim its target where we're looking
+  controls.target.copy(camera.position).add(F);
+
+  // 3) Kick your on-demand render/damping loop
+  startDampedRAF();
+}
+
+// elem.addEventListener('mousemove', onMouseMove);
 
     // ------------------ WASD: walk by camera heading on the globe ------------------
     const CENTER = new THREE.Vector3(0, 0, 0);
@@ -788,14 +838,31 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
 
     const SURFACE_SPEED = 200; // world units/sec along the surface
 
-    // scratch
-    const n = new THREE.Vector3();
-    const screenUp = new THREE.Vector3();
-    const screenRight = new THREE.Vector3();
-    const fwdT = new THREE.Vector3();
-    const rightT = new THREE.Vector3();
-    const axis = new THREE.Vector3();
-    const q = new THREE.Quaternion();
+// scratch
+const n = new THREE.Vector3();
+const screenUp = new THREE.Vector3();
+const screenRight = new THREE.Vector3();
+const fwdT = new THREE.Vector3();
+const rightT = new THREE.Vector3();
+const axis = new THREE.Vector3();
+const q = new THREE.Quaternion();
+
+// ---- add these: local tangent frame scratch ----
+const east = new THREE.Vector3();   // +longitude tangent
+const north = new THREE.Vector3();  // +latitude (toward N pole)
+const refAxis = new THREE.Vector3();// degeneracy helper near poles
+
+// ---- add these: mouse-look "state" and preview scratch ----
+let yaw = 0;                        // radians
+let pitch = 0;                      // radians
+const PITCH_MAX = THREE.MathUtils.degToRad(85); // clamp so we never flip
+const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
+let PITCH_FOR_YAW: 'useActual' | number = 'useActual';
+PITCH_FOR_YAW = 0;   
+
+const previewF = new THREE.Vector3(); // preview forward (not applied)
+const tmp = new THREE.Vector3();      // scratch
+
 
     function onKeyDown(e: KeyboardEvent) {
       const k = e.key.toLowerCase();
@@ -868,10 +935,41 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
         }
 
         if (didMove) {
-          controls.target.copy(CENTER); // keep pivot at center
-          camera.lookAt(controls.target);
-          startDampedRAF();
-        }
+  // --- recompute local UP at the NEW position ---
+  n.copy(camera.position).sub(CENTER).normalize();
+
+  // --- build local tangent frame (EAST/NORTH) at this spot ---
+  // pick a stable reference axis to cross with UP; swap near poles to avoid tiny cross products
+  if (Math.abs(n.y) > 0.99) {
+    refAxis.set(1, 0, 0);  // near poles, use world X as reference
+  } else {
+    refAxis.set(0, 1, 0);  // otherwise, use world Y as reference
+  }
+  east.crossVectors(refAxis, n).normalize();   // E = normalize(ref × U)
+  north.crossVectors(n, east).normalize();     // N = normalize(U × E)
+
+  // --- log them for verification ---
+  // Note: n is UP (radial), east is +longitude tangent, north is +latitude tangent
+  console.log(
+    "[Local Frame] UP:", n.toArray(),
+    "EAST:", east.toArray(),
+    "NORTH:", north.toArray()
+  );
+
+
+  // Rebuild view from the SAME yaw/pitch at the NEW position
+  const { F, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
+
+  // 1) Apply orientation
+  camera.quaternion.copy(qCam);
+
+  // 2) Sync OrbitControls to this new forward
+  controls.target.copy(camera.position).add(F);
+
+  // 3) Kick the render/damping loop
+  startDampedRAF();
+}
+
 
         requestAnimationFrame(step);
       };
@@ -965,9 +1063,16 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       renderer.dispose();
       if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
 
-      // elem.removeEventListener('mousemove', onMouseMove);
-      // restore controls.update if you like (optional in most apps)
-      // controls.update = _origUpdate;
+      // If still locked, release
+  if (document.pointerLockElement === elem) document.exitPointerLock();
+
+  elem.removeEventListener("click", onCanvasClick);
+  document.removeEventListener("pointerlockchange", onPointerLockChange);
+  document.removeEventListener("pointerlockerror", onPointerLockError);
+  window.removeEventListener("keydown", onReleaseKey);
+  // onMouseMove is removed by pointerlockchange when unlocked,
+  // but remove defensively anyway:
+  elem.removeEventListener("mousemove", onMouseMove);
     };
   }, []);
 
