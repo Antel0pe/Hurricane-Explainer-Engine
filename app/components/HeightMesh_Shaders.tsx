@@ -689,38 +689,36 @@ controls.minPolarAngle = 0.0001;
 controls.maxPolarAngle = Math.PI - 0.0001;
 controls.minAzimuthAngle = -Infinity;
 controls.maxAzimuthAngle = Infinity;
+// --- Horizon Test (toggleable): when true, behave as if pitch = 0° (level with horizon)
+let HORIZON_TEST = false;
+
 
 // Helper: recompute local frame, build F/R, make quaternion, and log
 function previewCameraOrientationFromYawPitch(yaw: number, pitch: number) {
-  // 1) Local frame at current camera position
-  const U = new THREE.Vector3().copy(camera.position).sub(CENTER).normalize(); // radial up
+// 1) Local frame at current camera position
+const U = new THREE.Vector3().copy(camera.position).sub(CENTER).normalize();
+const ref = Math.abs(U.y) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+const E = new THREE.Vector3().crossVectors(ref, U).normalize();
+const N = new THREE.Vector3().crossVectors(U, E).normalize();
 
-  const ref = Math.abs(U.y) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-  const E = new THREE.Vector3().crossVectors(ref, U).normalize();             // east  (tangent)
-  const N = new THREE.Vector3().crossVectors(U, E).normalize();               // north (tangent)
+// 2) Yaw around U at a chosen "band" (pEff), then apply leftover pitch around yawed East.
+//    While Horizon Test is ON: pretend pitch = 0 for yaw *and* suppress leftover pitch.
+const pEff = HORIZON_TEST ? 0 : pitch;
 
-// 2) Yaw should spin around U at a chosen "band" of pitch.
-//    We "pretend" the pitch is pEff for yaw, then add the leftover pitch afterward.
+// (a) pre-tilt base forward to effective band
+const N_p  = new THREE.Vector3().copy(N).applyAxisAngle(E, pEff);
 
-const pEff =
-  PITCH_FOR_YAW === 'useActual'
-    ? pitch
-    : THREE.MathUtils.degToRad(
-         PITCH_FOR_YAW
-      );
-
-// (a) pre-tilt base forward to the effective band (around original E)
-const N_p = new THREE.Vector3().copy(N).applyAxisAngle(E, pEff);
-
-// (b) yaw around gravity U at that band
+// (b) yaw around gravity at that band
 const F_yaw = new THREE.Vector3().copy(N_p).applyAxisAngle(U, yaw);
 
-// (c) compute the yawed East (ears axis) to apply the *leftover* pitch
+// (c) yawed East (ears axis) for applying only the leftover pitch
 const yawQ  = new THREE.Quaternion().setFromAxisAngle(U, yaw);
 const E_yaw = new THREE.Vector3().copy(E).applyQuaternion(yawQ);
 
-// (d) apply only the remainder of the pitch so final pitch = pEff + (pitch - pEff) = pitch
-const F = F_yaw.applyAxisAngle(E_yaw, (pitch - pEff)).normalize();
+// (d) leftover pitch (0 when Horizon Test is ON)
+const pitchRemainder = HORIZON_TEST ? 0 : (pitch - pEff);
+
+const F = F_yaw.applyAxisAngle(E_yaw, pitchRemainder).normalize();
 
 
 // 3) Build a no-roll basis *around* the pitched F (keep F as-is)
@@ -757,7 +755,7 @@ const dots = {
   );
 
   // Return in case you want to use it next step (not applying now)
-  return { U, E, N, F, R, qCam };
+  return { U, E, N, F, R, U_cam, qCam };
 }
 
 
@@ -816,8 +814,8 @@ function onMouseMove(e: MouseEvent) {
   pitch = THREE.MathUtils.clamp(pitch - dy * MOUSE_SENS, -PITCH_MAX, PITCH_MAX);
 
     // Build camera basis & quaternion from current yaw/pitch at THIS position
-  const { F, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
-
+  const { F, U_cam, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
+ camera.up.copy(U_cam);
   // 1) Apply orientation
   camera.quaternion.copy(qCam);
 
@@ -858,18 +856,26 @@ let pitch = 0;                      // radians
 const PITCH_MAX = THREE.MathUtils.degToRad(85); // clamp so we never flip
 const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
 let PITCH_FOR_YAW: 'useActual' | number = 'useActual';
-PITCH_FOR_YAW = 0;   
+PITCH_FOR_YAW = 90;   
 
 const previewF = new THREE.Vector3(); // preview forward (not applied)
 const tmp = new THREE.Vector3();      // scratch
 
 
     function onKeyDown(e: KeyboardEvent) {
-      const k = e.key.toLowerCase();
-      if ([" "].includes(k)) e.preventDefault();
-      pressed.add(k);
-      startMoveLoop();
-    }
+  const k = e.key.toLowerCase();
+  if ([" "].includes(k)) e.preventDefault();
+  pressed.add(k);
+  // --- add: toggle horizon test with 'h' ---
+  if (k === 'h') {
+    HORIZON_TEST = !HORIZON_TEST;
+    // when turning it on, zero out stored pitch so you're exactly at the horizon band
+    if (HORIZON_TEST) pitch = 0;
+    console.log(`[HorizonTest] ${HORIZON_TEST ? 'ON' : 'OFF'} (pitch forced to 0° while ON)`);
+  }
+  startMoveLoop();
+}
+
     function onKeyUp(e: KeyboardEvent) {
       pressed.delete(e.key.toLowerCase());
     }
@@ -958,8 +964,8 @@ const tmp = new THREE.Vector3();      // scratch
 
 
   // Rebuild view from the SAME yaw/pitch at the NEW position
-  const { F, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
-
+const { F, U_cam, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
+camera.up.copy(U_cam);
   // 1) Apply orientation
   camera.quaternion.copy(qCam);
 
