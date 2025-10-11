@@ -58,6 +58,8 @@ ways to make wind particles better
 future ideas:
 - waves
 - clouds
+    - currently have them as 2d layers
+    - need to make them actually 3d now
 - vertical air particle motion -- although would this conflict with air particles z values being determined by gph currently. 
     - answer is depending on which variable i get. if i look at the rising/sinking nature of air at a certain pressure level that is equivalent to gph since that tells me how air is rising and sinking at a given pressure level. if i look at variables that tell me absolutely rising/sinking nature then it's different and will generally line up with gph in quiet flows but in things like hurricanes will not line up with gph ie. not stay at a single pressure level
 - integrate with globegl or turn it into a globe rather than rectangle
@@ -69,6 +71,8 @@ future ideas:
 - increase resolution of mesh, wind, etc
 - thunder
 - precip
+    - to start can make precip drop from the top/low cloud layer
+    - then can analyze to figure out what type of precip, where it was likely to fall from
 - physics nets to make more realistic motion
 - make clouds move with wind
 - day/night cycles
@@ -81,3 +85,8 @@ future ideas:
 - actually implement vertical wind motion according to era5
 - do sea surface temp similar to atmospheric temp
 - fix up the components such that when you switch the time, it doesnt erase everything on screen and render a new thing. basically properly update uniforms when a mat has already been created.
+- create google maps like drag person and place on ground and it automatically sets you at ground height with correct pitch where you drag it
+- lod as you zoom in and out
+- add 3d stuff on the surface like mapbox 3d tiles
+- add speed toggle for controls and perhaps have small map overlay that shows where they are
+- prevent altitude from going into the earth
