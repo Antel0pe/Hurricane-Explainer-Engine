@@ -714,30 +714,6 @@ const Z = new THREE.Vector3().copy(F).negate();
 const rot = new THREE.Matrix4().makeBasis(R, U_cam, Z);
 const qCam = new THREE.Quaternion().setFromRotationMatrix(rot);
 
-
-  // 5) Log sanity info
-const dots = {
-  F_dot_U:   +F.dot(U).toFixed(3),      // should match your [Mouse Preview] f_dot_u
-  Ucam_dot_U:+U_cam.dot(U).toFixed(3),  // ~1 (camera up aligns with gravity projection)
-  R_len:     +R.length().toFixed(3),    // ~1
-  F_len:     +F.length().toFixed(3),    // ~1
-};
-
-
-  console.log(
-    "[Preview Cam Basis]",
-    "yaw°", THREE.MathUtils.radToDeg(yaw).toFixed(1),
-    "pitch°", THREE.MathUtils.radToDeg(pitch).toFixed(1),
-    "\n U", U.toArray(),
-    "\n E", E.toArray(),
-    "\n N", N.toArray(),
-    "\n F", F.toArray(),
-    "\n R", R.toArray(),
-    "\n quat", [qCam.x, qCam.y, qCam.z, qCam.w].map(v => +v.toFixed(6)),
-    "\n dots", dots
-  );
-
-  // Return in case you want to use it next step (not applying now)
   return { U, E, N, F, R, U_cam, qCam };
 }
 
@@ -833,8 +809,8 @@ const refAxis = new THREE.Vector3();// degeneracy helper near poles
 
 // ---- add these: mouse-look "state" and preview scratch ----
 let yaw = 0;                        // radians
-let pitch = -85;                      // radians
-const PITCH_MAX = THREE.MathUtils.degToRad(85); // clamp so we never flip
+const PITCH_MAX = THREE.MathUtils.degToRad(89.99); // clamp so we never flip
+let pitch = -(PITCH_MAX - 1e-4);                      // radians
 const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
 
     function onKeyDown(e: KeyboardEvent) {
@@ -921,14 +897,6 @@ const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
   }
   east.crossVectors(refAxis, n).normalize();   // E = normalize(ref × U)
   north.crossVectors(n, east).normalize();     // N = normalize(U × E)
-
-  // --- log them for verification ---
-  // Note: n is UP (radial), east is +longitude tangent, north is +latitude tangent
-  console.log(
-    "[Local Frame] UP:", n.toArray(),
-    "EAST:", east.toArray(),
-    "NORTH:", north.toArray()
-  );
 
 
   // Rebuild view from the SAME yaw/pitch at the NEW position
@@ -1139,7 +1107,6 @@ camera.up.copy(U_cam);
       }
 
       const pct = (zeroCount / total * 100).toFixed(2);
-      console.log(`trailRT zeros: ${zeroCount}/${total} (${pct}%)`);
     }
 
     const loop = () => {

@@ -65,8 +65,13 @@ export default function ControlsHelp() {
           <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "center" }}>
             <MouseIcon />
             <div>
-              COMING SOON: Look / zoom
-              <div style={{ opacity: 0.7, fontWeight: 400 }}>Drag to orbit, wheel to zoom</div>
+              Look around
+              <div style={{ opacity: 0.7, fontWeight: 400 }}>
+                  Click the globe to enter free fly. Move your mouse left and right to turn your view, and up or down to tilt it toward the horizon or ground.  
+    Press <b>Q</b> or <b>Esc</b> to exit.
+
+              
+              </div>
             </div>
           </div>
         </div>
