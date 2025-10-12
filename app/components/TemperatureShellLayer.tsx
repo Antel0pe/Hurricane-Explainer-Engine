@@ -320,7 +320,7 @@ export default function TemperatureShellLayer({
 
         // keep uCamPos synced without a RAF; piggyback on the render cycle
         mesh.onBeforeRender = () => {
-          mat.uniforms.uCamPos.value.copy((camera as any).position);
+          mat.uniforms.uCamPos.value.copy(camera.position);
         };
 
         scene.add(mesh);
