@@ -27,9 +27,14 @@ export function uvDir(pressureLevel: string) {
   return path.join(repoRoot(), DATA_FOLDER, "uv_images", String(pressureLevel));
 }
 
+export function elevationMapPath() {
+  return path.join(repoRoot(), DATA_FOLDER, "elevation_map.png");
+}
+
 export function landMaskPath() {
   return path.join(repoRoot(), DATA_FOLDER, "landMask.png");
 }
+
 
 export function cloudCoverPath() {
   return path.join(repoRoot(), DATA_FOLDER, "cloudCover");

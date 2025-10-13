@@ -14,6 +14,7 @@ import { PaneHub } from "./tweaks/PaneHub";
 import { useFeatureFlag } from "./tweaks/FeatureBusHook";
 import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_shared_glsl, getWindMotionRangesPerPressureLevel } from "./ShadersLib";
 import TemperatureShellLayer from "./TemperatureShellLayer";
+import TerrainSphereLayer from "./ElevationLayer";
 
 
 
@@ -1496,6 +1497,20 @@ camera.up.copy(U_cam);
       enabled={true}
       autoFrameOnce={true}
     />)}
+
+    <TerrainSphereLayer
+        renderer={rendererRef.current}
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        sun={sunRef.current}
+        baseRadius={100}
+        zOffset={10}
+        exaggeration={50.0}
+        enabled={true}
+        onReady={(mesh) => {
+          console.log("Terrain sphere ready:", mesh);
+        }}
+      />
 
 
   </div>;

@@ -90,3 +90,4 @@ future ideas:
 - add 3d stuff on the surface like mapbox 3d tiles
 - add speed toggle for controls and perhaps have small map overlay that shows where they are
 - prevent altitude from going into the earth
+- make sure exampleData and data are consistent
