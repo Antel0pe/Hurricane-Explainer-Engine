@@ -20,7 +20,7 @@ import TerrainSphereLayer from "./ElevationLayer";
 
 
 const mapUVtoLatLng = `
-  float globeRadius = 100.0;
+  float globeRadius = 110.0;
   
   // deg→rad
   float d2r(float d) { return d * 0.017453292519943295; }
@@ -1502,7 +1502,6 @@ camera.up.copy(U_cam);
         renderer={rendererRef.current}
         scene={sceneRef.current}
         camera={cameraRef.current}
-        sun={sunRef.current}
         baseRadius={100}
         zOffset={10}
         exaggeration={50.0}

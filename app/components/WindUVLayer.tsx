@@ -5,18 +5,14 @@ import { useEffect, useRef } from "react";
 import {
   TRAIL_DECAY_FRAG,
   TRAIL_DECAY_VERT,
-  PREVIEW_FRAG,
-  PREVIEW_VERT,
   TRAIL_GLOBE_FRAG,
   TRAIL_GLOBE_VERT,
-  TRAIL_OVERLAY_FRAG,
-  TRAIL_OVERLAY_VERT,
   TRAIL_STAMP_MIN_VERT,
-  VERT,
   WindLayerAPI,
 } from "./HeightMesh_Shaders";
 import { PaneHub } from "./tweaks/PaneHub";
 import { defaultZOffsetForPressure } from "../utils/zLayout";
+import { getGlobeRadius } from "../utils/globeInfo";
 
 type Props = {
   url: string;
@@ -432,9 +428,9 @@ export default function WindUvLayer({
           trailStampScene.add(trailStampPoints);
 
           // --- globe overlay that samples the UV-space trailRT ---
-          const globeRadius = 100; // keep in sync with your shaders/constants
+          const globeRadius = getGlobeRadius(); // keep in sync with your shaders/constants
           const trailOverlayGeom = new THREE.SphereGeometry(
-            globeRadius + 0.05,
+            globeRadius + 1,
             256,
             128
           );

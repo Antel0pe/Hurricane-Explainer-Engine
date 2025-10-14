@@ -91,3 +91,7 @@ future ideas:
 - add speed toggle for controls and perhaps have small map overlay that shows where they are
 - prevent altitude from going into the earth
 - make sure exampleData and data are consistent
+- star background in scene behind earth 
+- make clouds move with wind and get reset to intial starting position too
+    - maybe make them move half the speed of the actual wind?
+- sync up wind particles + trail height code

@@ -3,46 +3,45 @@
 import * as THREE from "three";
 import { useEffect, useRef } from "react";
 
-const API_URL = "/api/elevation"; // ← fill with your uint16 grayscale GEBCO PNG (equirect 4096x2048 etc.)
+const API_URL = "/api/elevation";   // uint16 grayscale GEBCO PNG (equirect, e.g., 4096x2048)
+const IMG_URL = "/api/earthSurface"; // equirectangular color imagery (≥4K recommended)
 
 type Props = {
   renderer: THREE.WebGLRenderer | null;
   scene: THREE.Scene | null;
   camera: THREE.Camera | null;
-  sun?: THREE.Object3D | null;  // optional, not required for this POC
   enabled?: boolean;
-  baseRadius?: number;  // base radius for globe, default 100
-  zOffset?: number;     // meters to lift whole terrain, default 10
-  exaggeration?: number; // vertical exaggeration (meters multiplier), default 1.0
-  segments?: { width?: number; height?: number }; // sphere segment density
+  baseRadius?: number;                 // default 100
+  zOffset?: number;                    // meters, default 10
+  exaggeration?: number;               // multiplier on meters, default 1
+  lonOffset01?: number;                // fraction of 360° (0.25 = +90°), default 0.25
+  segments?: { width?: number; height?: number };
   onReady?: (mesh: THREE.Mesh) => void;
 };
 
-// --- Minimal vertex & fragment shaders (POC) ---
-// Assumes the height texture is a grayscale PNG with values scaled 0..65535 → normalized to 0..1 by the browser.
-// We reconstruct meters by multiplying by uMaxMeters (e.g., 10000 m).
+// ---- WebGL1 shaders ----
 const TERRAIN_VERT = /* glsl */`
 precision highp float;
 
 uniform sampler2D uHeightTex;
-uniform float uBaseRadius;   // e.g., 100.0
-uniform float uZOffset;      // e.g., 10.0
-uniform float uExaggeration; // e.g., 1.0
-uniform float uMaxMeters;    // e.g., 10000.0
-uniform float uMetersToWorld; 
-uniform float uLonOffset;
+uniform float uBaseRadius;
+uniform float uZOffset;
+uniform float uExaggeration;
+uniform float uMaxMeters;
+uniform float uMetersToWorld;
+uniform float uLonOffset01;
 
 varying float vHeightMeters;
-varying vec2 vUv;
+varying vec2 vUvShifted;
 
 void main() {
-  vUv = uv;
-  vec2 uvShifted = vec2(fract(vUv.x + uLonOffset), vUv.y);
+  // shift longitude and wrap horizontally
+  vUvShifted = vec2(uv.x + uLonOffset01, uv.y);
 
-  // Sample height (browser normalizes PNG to 0..1)
-  float h01 = texture2D(uHeightTex, uvShifted).r;
+  // Height in meters (PNG normalized 0..1)
+  float h01 = texture2D(uHeightTex, vUvShifted).r;
   float h_m = clamp(h01 * uMaxMeters, 0.0, uMaxMeters);
-    float h_world = h_m * uMetersToWorld;         
+  float h_world = h_m * uMetersToWorld;
 
   // Radial displacement from unit sphere
   vec3 dir = normalize(position);
@@ -59,32 +58,42 @@ const TERRAIN_FRAG = /* glsl */`
 precision highp float;
 
 varying float vHeightMeters;
-varying vec2 vUv;
+varying vec2 vUvShifted;
 
 uniform float uMaxMeters;
+uniform sampler2D uAlbedoTex;
+uniform float uUseAlbedo; // 0 or 1
 
 void main() {
+  // grayscale fallback (if albedo not ready)
   float t = clamp(vHeightMeters / uMaxMeters, 0.0, 1.0);
-  gl_FragColor = vec4(vec3(t), 1.0);
+  vec3 baseGray = vec3(t);
+
+  // imagery if loaded
+  vec3 albedo = texture2D(uAlbedoTex, vUvShifted).rgb;
+  vec3 color = mix(baseGray, albedo, step(0.5, uUseAlbedo));
+
+  // Keep opaque for now (you can make oceans transparent later if desired)
+  gl_FragColor = vec4(color, 1.0);
 }
 `;
-
 
 export default function TerrainSphereLayer({
   renderer,
   scene,
   camera,
-  sun = null,
   enabled = true,
   baseRadius = 100,
   zOffset = 10,
   exaggeration = 1.0,
+  lonOffset01 = 0.25, // tweak until coastlines line up (+90° default)
   segments = { width: 256, height: 128 },
   onReady,
 }: Props) {
   const meshRef = useRef<THREE.Mesh | null>(null);
-  const matRef = useRef<THREE.ShaderMaterial | null>(null);
-  const texRef = useRef<THREE.Texture | null>(null);
+  const matRef  = useRef<THREE.ShaderMaterial | null>(null);
+  const hTexRef = useRef<THREE.Texture | null>(null);
+  const aTexRef = useRef<THREE.Texture | null>(null);
 
   useEffect(() => {
     if (!enabled || !renderer || !scene || !camera || !API_URL) return;
@@ -92,61 +101,94 @@ export default function TerrainSphereLayer({
     let disposed = false;
     const loader = new THREE.TextureLoader();
 
+    // 1) Load HEIGHT texture
     loader.load(
       API_URL,
-      (tex) => {
-        if (disposed) { tex.dispose(); return; }
+      (heightTex) => {
+        if (disposed) { heightTex.dispose(); return; }
 
-        // Texture params for an equirect height map
-        // Note: Browsers decode PNGs to 8-bit per channel; that's OK for this POC.
-        tex.flipY = true; // SphereGeometry UVs expect v=0 at top
-        tex.colorSpace = THREE.NoColorSpace;
-        tex.wrapS = THREE.RepeatWrapping;       // wrap horizontally across 180/-180 seam
-        tex.wrapT = THREE.ClampToEdgeWrapping;  // clamp at poles
-        tex.minFilter = THREE.NearestFilter;
-        tex.magFilter = THREE.NearestFilter;
-        tex.generateMipmaps = false;
-        tex.needsUpdate = true;
+        // Height texture setup (safe while debugging)
+        heightTex.flipY = true;
+        heightTex.colorSpace = THREE.NoColorSpace;
+        heightTex.wrapS = THREE.RepeatWrapping;       // we shift/wrap longitude
+        heightTex.wrapT = THREE.ClampToEdgeWrapping;  // clamp at poles
+        heightTex.minFilter = THREE.NearestFilter;
+        heightTex.magFilter = THREE.NearestFilter;
+        heightTex.generateMipmaps = false;
+        
+        heightTex.needsUpdate = true;
 
-        const METERS_TO_WORLD = 100.0 / 6371000.0;
+        hTexRef.current = heightTex;
 
-        // Build material
+        // Build/attach material + mesh immediately so you can see grayscale relief
+        const METERS_TO_WORLD = baseRadius / 6371000.0; // 100 units ~ Earth radius
+
         const mat = new THREE.ShaderMaterial({
           uniforms: {
-            uHeightTex:    { value: tex },
-            uBaseRadius:   { value: baseRadius },
-            uZOffset:      { value: zOffset },
-            uExaggeration: { value: exaggeration },
-            uMaxMeters:    { value: 10000.0 }, // match your PNG scaling (VMAX in your script)
-            uMetersToWorld:{ value: METERS_TO_WORLD }, // NEW
-            uLonOffset:  { value: 0.25 },
+            // height
+            uHeightTex:     { value: heightTex },
+            uBaseRadius:    { value: baseRadius },
+            uZOffset:       { value: zOffset },
+            uExaggeration:  { value: exaggeration },
+            uMaxMeters:     { value: 10000.0 },            // matches your PNG scaling VMAX
+            uMetersToWorld: { value: METERS_TO_WORLD },
+            uLonOffset01:   { value: lonOffset01 },
+
+            // imagery (hooked up once loaded)
+            uAlbedoTex:     { value: null },
+            uUseAlbedo:     { value: 0.0 },
           },
           vertexShader: TERRAIN_VERT,
           fragmentShader: TERRAIN_FRAG,
-          transparent: false,
-          depthWrite: true,
           side: THREE.FrontSide,
+          depthWrite: true,
+          transparent: false,
         });
 
-        // Unit sphere; vertex shader sets actual radius via displacement
         const segW = Math.max(8, segments.width ?? 256);
         const segH = Math.max(8, segments.height ?? 128);
         const geo = new THREE.SphereGeometry(1.0, segW, segH);
-
         const mesh = new THREE.Mesh(geo, mat);
-        // Important: Keep object-space radius = 1. Displacement uses dir = normalize(position).
-        mesh.frustumCulled = false;
+        mesh.frustumCulled = false; // displaced bounds unknown to Three
 
         scene.add(mesh);
 
         meshRef.current = mesh;
-        matRef.current = mat;
-        texRef.current = tex;
+        matRef.current  = mat;
 
         onReady?.(mesh);
-
-        // Draw once (your main render loop likely exists elsewhere)
         renderer.render(scene, camera);
+
+        // 2) Load ALBEDO (imagery) texture (async; swaps in when ready)
+        if (IMG_URL) {
+          loader.load(
+            IMG_URL,
+            (albedo) => {
+              if (disposed) { albedo.dispose(); return; }
+              albedo.flipY = true;
+              albedo.colorSpace = THREE.SRGBColorSpace;
+              albedo.wrapS = THREE.RepeatWrapping;
+              albedo.wrapT = THREE.ClampToEdgeWrapping;
+              albedo.minFilter = THREE.LinearMipmapLinearFilter;
+              albedo.magFilter = THREE.LinearFilter;
+              albedo.generateMipmaps = true;
+              albedo.anisotropy =
+                (renderer.capabilities as any).getMaxAnisotropy?.() ?? 1;
+
+albedo.needsUpdate = true;
+
+              aTexRef.current = albedo;
+
+              if (matRef.current) {
+                matRef.current.uniforms.uAlbedoTex.value = albedo;
+                matRef.current.uniforms.uUseAlbedo.value = 1.0;
+              }
+            },
+            undefined,
+            // imagery load error: keep grayscale fallback
+            () => {}
+          );
+        }
       },
       undefined,
       (err) => {
@@ -159,14 +201,17 @@ export default function TerrainSphereLayer({
       if (meshRef.current && scene) scene.remove(meshRef.current);
       (meshRef.current?.geometry as THREE.BufferGeometry | undefined)?.dispose?.();
       (meshRef.current?.material as THREE.Material | undefined)?.dispose?.();
-      meshRef.current = null;
 
       matRef.current = null;
 
-      texRef.current?.dispose();
-      texRef.current = null;
+      hTexRef.current?.dispose();
+      hTexRef.current = null;
+
+      aTexRef.current?.dispose();
+      aTexRef.current = null;
     };
-  }, [enabled, renderer, scene, camera, baseRadius, zOffset, exaggeration, segments.width, segments.height]);
+  // only re-run when core params change
+  }, [enabled, renderer, scene, camera, baseRadius, zOffset, exaggeration, lonOffset01, segments.width, segments.height]);
 
   return null;
 }

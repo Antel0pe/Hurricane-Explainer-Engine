@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PaneHub } from "./tweaks/PaneHub";
 import { GET_POSITION_Z_SHARED_GLSL3 } from "./ShadersLib";
+import { getGlobeRadius } from "../utils/globeInfo";
 
 // Swap this to your endpoint (PNG of the global fBm look field, R in [0..1])
 const FBM_NOISE_API = "/api/cloud_cover/noise";
@@ -572,7 +573,7 @@ export default function CloudCoverLayer({
 
       // ---- Build/refresh the visible cloud mesh ----
       // 2) In tryRunPipelineAndAttach() — build/refresh the visible cloud mesh
-const globeRadius = 100;
+const globeRadius = getGlobeRadius();
 const SHELLS = 10;
 
 // we’ll drive radius in the shader, so use a unit sphere here

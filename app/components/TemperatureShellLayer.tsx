@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { getTemperatureRangesPerPressureLevel } from "./ShadersLib";
 import { PaneHub } from "./tweaks/PaneHub";
+import { getGlobeRadius } from "../utils/globeInfo";
 
 export const TEMPERATURE_SHELL_VERT = `
   out vec3 vWorldPos;
@@ -239,7 +240,7 @@ export default function TemperatureShellLayer({
     let disposed = false;
 
     // fixed radii inside component (no prop defaults per request)
-    const globeR = 100.0;
+    const globeR = getGlobeRadius();
     const shellThickness = zOffsetPerPressureLevel(pressure); // internal constant
     const innerR = globeR;
     const outerR = globeR + shellThickness;

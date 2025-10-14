@@ -31,6 +31,10 @@ export function elevationMapPath() {
   return path.join(repoRoot(), DATA_FOLDER, "elevation_map.png");
 }
 
+export function earthSurfacePath() {
+  return path.join(repoRoot(), DATA_FOLDER, "earthSurface.png");
+}
+
 export function landMaskPath() {
   return path.join(repoRoot(), DATA_FOLDER, "landMask.png");
 }
