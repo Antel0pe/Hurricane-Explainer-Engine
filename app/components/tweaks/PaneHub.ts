@@ -317,6 +317,7 @@ class PaneHubClass {
 
     return () => {
       disposers.forEach((d) => d());
+      folder.dispose();
     };
   }
 

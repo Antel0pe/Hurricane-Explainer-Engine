@@ -131,6 +131,7 @@ export default function HeightMeshLayer({
           const geo = new THREE.PlaneGeometry(aspect, 1, 768, 768);
           const mat = buildMaterial(texture);
           const mesh = new THREE.Mesh(geo, mat);
+          mesh.frustumCulled = false;
           scene!.add(mesh);
 
           meshRef.current = mesh;

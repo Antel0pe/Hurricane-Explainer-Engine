@@ -95,3 +95,5 @@ future ideas:
 - make clouds move with wind and get reset to intial starting position too
     - maybe make them move half the speed of the actual wind?
 - sync up wind particles + trail height code
+- add lighting shaders to new globe
+- opacity for clouds based on rain content etc
