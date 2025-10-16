@@ -483,6 +483,185 @@ vec2 wind = normalize(windRG * 2.0 - 1.0);
 }
 `
 
+// --- Single-volume proxy shaders (segments only, no marching) -------------
+const CLOUD_PROXY_VERT = /* glsl */`
+  precision highp float;
+  out vec3 vWorld;
+  
+  void main(){
+    vec3 unit = normalize(position);      // keep sphere coordinates stable
+    vec4 wp   = modelMatrix * vec4(unit, 1.0);
+    vWorld    = wp.xyz;                   // world position on proxy surface
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const CLOUD_PROXY_FRAG = /* glsl */ `
+precision highp float;
+
+in vec3 vWorld;
+out vec4 fragColor;
+
+uniform vec3  uCamPos;       // camera world pos
+uniform float uRBase;        // inner radius
+uniform float uRTop;         // outer radius
+uniform float uOpacity;      // final alpha multiplier
+
+// minimal knobs (hard values are fine for this step)
+uniform int   uNumSteps;     // e.g., 12
+uniform float uDensityScale; // e.g., 1.5
+
+// ---- helpers: hash / fade / value noise 3D -----------------------
+float hash13(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p += dot(p, p.yzx + 19.19);
+  return fract(p.x * p.y * p.z);
+}
+
+vec3 fade3(vec3 t) {
+  return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+float noise3D(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  vec3 u = fade3(f);
+
+  float n000 = hash13(i + vec3(0, 0, 0));
+  float n100 = hash13(i + vec3(1, 0, 0));
+  float n010 = hash13(i + vec3(0, 1, 0));
+  float n110 = hash13(i + vec3(1, 1, 0));
+  float n001 = hash13(i + vec3(0, 0, 1));
+  float n101 = hash13(i + vec3(1, 0, 1));
+  float n011 = hash13(i + vec3(0, 1, 1));
+  float n111 = hash13(i + vec3(1, 1, 1));
+
+  float nx00 = mix(n000, n100, u.x);
+  float nx10 = mix(n010, n110, u.x);
+  float nx01 = mix(n001, n101, u.x);
+  float nx11 = mix(n011, n111, u.x);
+
+  float nxy0 = mix(nx00, nx10, u.y);
+  float nxy1 = mix(nx01, nx11, u.y);
+
+  return mix(nxy0, nxy1, u.z); // [0,1]
+}
+
+// ray-sphere intersection: returns (tEnter, tExit); if no hit, .y <= .x
+vec2 raySphere(vec3 ro, vec3 rd, float R) {
+  float b    = dot(ro, rd);
+  float c    = dot(ro, ro) - R * R;
+  float disc = b * b - c;
+  if (disc < 0.0) return vec2(1.0, 0.0);
+
+  float s  = sqrt(disc);
+  float t0 = -b - s;
+  float t1 = -b + s;
+  return vec2(min(t0, t1), max(t0, t1));
+}
+
+void main() {
+  vec3 ro = uCamPos;
+  vec3 rd = normalize(vWorld - uCamPos); // good enough for this step
+
+  vec2 outHit = raySphere(ro, rd, uRTop);
+  if (!(outHit.y > max(outHit.x, 0.0))) discard; // no outer in front
+
+  vec2 inHit = raySphere(ro, rd, uRBase);
+
+  float roLen      = length(ro);
+  bool  outside    = (roLen > uRTop + 1e-3);
+  bool  insideShell = (roLen > uRBase + 1e-3) && (roLen < uRTop - 1e-3);
+
+  float t0, t1;
+  bool  hasInner = false;
+  float ovA = 0.0, ovB = 0.0;
+
+  if (outside) {
+    // *** NEAR-LOBE ONLY ***
+    // march from outer enter up to (but not past) inner enter
+    float enterOuter = max(outHit.x, 0.0);
+    float exitOuter  = outHit.y;
+    float enterInner = inHit.x;
+
+    t0 = enterOuter;
+    t1 = min(exitOuter, enterInner); // stop before inner core
+
+    if (!(t1 > t0)) discard; // nothing on near side
+
+    // no inner overlap to subtract (we stopped before it)
+    hasInner = false;
+
+  } else if (insideShell) {
+    // already in shell: march until outer exit; subtract any inner overlap ahead
+    t0 = 0.0;
+    t1 = outHit.y;
+
+    ovA = max(inHit.x, t0);
+    ovB = min(inHit.y, t1);
+    hasInner = (ovB > ovA);
+
+  } else {
+    // under base (inside inner): usually nothing useful; discard for this pass
+    discard;
+  }
+
+  // tiny step count and uniform step size
+  int   N  = uNumSteps;
+  float dt = (t1 - t0) / float(N);
+
+  // world-stable jitter seeded by ray direction (and a tiny cam term)
+  float j = hash13(vec3(rd * 97.0 + normalize(ro) * 13.0));
+  float t = t0 + j * dt;
+
+  float alpha = 0.0;
+  float firstTi = -1.0;  // records depth of the first meaningful contribution
+
+
+  // simple world-space noise parameters (fixed for this step)
+  float freq       = 8.0;   // feature size
+  float vertSquash = 0.65;  // puffiness
+  float thresh     = 0.50;  // on/off threshold
+  float edge       = 0.12;  // softness
+
+  // march
+  for (int i = 0; i < 64; ++i) { // hard loop cap
+    if (i >= N) break;
+
+    float ti = t + float(i) * dt;
+    if (hasInner && ti > ovA && ti < ovB) continue; // skip the hollow
+
+vec3 p   = ro + ti * rd;
+vec3 dir = normalize(p);
+vec3 q = vec3(dir.x, dir.y * vertSquash, dir.z) * freq;
+float n = noise3D(q);
+    float m = smoothstep(thresh - edge, thresh + edge, n); // 0..1
+    if (firstTi < 0.0 && m > 0.001) firstTi = ti;
+
+
+    // accumulate opacity (front-to-back)
+    alpha += (1.0 - alpha) * m * uDensityScale * dt;
+    if (alpha > 0.985) break;
+  }
+
+  if (alpha <= 0.001) discard;
+
+  // flat grey color for now; alpha scaled by uOpacity
+  // vec3 col = vec3(0.95);
+  // fragColor = vec4(col, clamp(alpha, 0.0, 1.0) * uOpacity);
+  // DEBUG: color = where along the shell we first "hit" density
+float depthFrac = (firstTi >= 0.0) ? clamp((firstTi - t0) / max(t1 - t0, 1e-3), 0.0, 1.0) : 0.0;
+// grayscale or a simple blue→red ramp helps you *see* near vs far inside the volume
+vec3 debugCol = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), depthFrac);
+fragColor = vec4(debugCol, clamp(alpha, 0.0, 1.0) * uOpacity);
+
+}
+
+`;
+
+
+
+
 // -------------------------------- React component --------------------------------
 type Props = {
   url: string;                               // ERA5 coverage (red channel)
@@ -602,28 +781,51 @@ if (volGroupRef.current) {
 }
 
 // decide initial radii (editable later)
-rBaseRef.current = globeRadius + 1.0;
+rBaseRef.current = globeRadius + 10.0;
 rTopRef.current  = globeRadius + 30.0;
 
 // make a group: [proxyMesh (translucent)] + [ringBase, ringTop] for verification
 const g = new THREE.Group();
 
-// 1) proxy sphere at R_top (solid, translucent)
+// 1) proxy sphere at R_top (shader that visualizes shell thickness)
 {
-  const geom = new THREE.SphereGeometry(1, 256, 128); // unit; we’ll scale
-  const mat  = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
+  // when creating the material:
+const size = new THREE.Vector2();
+renderer!.getSize(size);                      // CSS pixels
+const dpr = renderer!.getPixelRatio();        // device pixel ratio
+const drawW = Math.round(size.x * dpr);       // drawing buffer size
+const drawH = Math.round(size.y * dpr);
+
+
+  const geom = new THREE.SphereGeometry(1, 256, 128);
+  const mat  = new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader:   CLOUD_PROXY_VERT,
+    fragmentShader: CLOUD_PROXY_FRAG,
     transparent: true,
-    opacity: 0.15,
     depthTest: true,
     depthWrite: false,
-    side: THREE.DoubleSide
+    blending: THREE.NormalBlending,
+    side: THREE.DoubleSide,
+    uniforms: {
+      uCamPos:  { value: camera!.position.clone() },
+      uRBase:   { value: rBaseRef.current },
+      uRTop:    { value: rTopRef.current },
+      uOpacity: { value: 0.8 },
+          uNumSteps:     { value: 12 },
+    uDensityScale: { value: 1.6 },
+    }
   });
+  mat.toneMapped = false;
+
+
   const proxy = new THREE.Mesh(geom, mat);
-  proxy.scale.setScalar(rTopRef.current); // radius = R_top
+  proxy.scale.setScalar(rTopRef.current);   // keep the sphere scaled to R_top (nice for debugging)
   proxy.renderOrder = 14;
+  proxy.userData.isCloudProxy = true;
   g.add(proxy);
 }
+
 
 // 2) thin ring at R_base (wireframe)
 {
@@ -819,6 +1021,24 @@ paneHubDisposeCleanup.push(
   // Live param updates
   useEffect(() => { if (matRef.current) matRef.current.uniforms.uOpacity.value = opacity; }, [opacity]);
   useEffect(() => { if (matRef.current) matRef.current.uniforms.uEps.value     = feather; }, [feather]);
+
+  useEffect(() => {
+  if (!scene || !camera) return;
+  let raf = 0;
+  const tick = () => {
+    scene.traverse(obj => {
+      const mat = (obj as any).material as THREE.ShaderMaterial;
+      if (mat && mat.uniforms && mat.uniforms.uCamPos) {
+        mat.uniforms.uCamPos.value.copy((camera as any).position);
+      }
+
+    });
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(raf);
+}, [scene, camera]);
+
 
   return null;
 }
