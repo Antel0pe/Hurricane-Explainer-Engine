@@ -29,6 +29,7 @@ type Props = {
   SIM_FRAG: string;
   onReady?: (api: WindLayerAPI) => void;
   onRemove?: (api: WindLayerAPI) => void;
+  setWindTex?: (tex: THREE.Texture) => void;
   // zOffset?: number;
 };
 
@@ -46,6 +47,7 @@ export default function WindUvLayer({
   SIM_FRAG,
   onReady,
   onRemove,
+  setWindTex,
   // zOffset,
 }: Props) {
   // --- per-layer refs (do NOT share across layers)
@@ -95,6 +97,7 @@ export default function WindUvLayer({
         texture.magFilter = THREE.NearestFilter;
         texture.generateMipmaps = false;
         texture.needsUpdate = true;
+        setWindTex?.(texture);
 
         const img = texture.image as unknown as {
           width?: number;

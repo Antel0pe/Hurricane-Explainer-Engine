@@ -384,7 +384,7 @@ void main(){
   if (uUseTerrain) {
     vec2 uv = worldToUV_dir(dir_world);
     // returns t in [0,1] when exaggeration==1.0 (your helper)
-    float hNorm = get_position_z_glsl3(uTerrainTexture, uv, 1.0); 
+    float hNorm = get_position_z_glsl3(uTerrainTexture, uv, 1.0);
     // match winds: uExaggeration * 50.0 * t + uAboveTerrain
     terrainMeters = uExaggeration * hNorm + uAboveTerrain;
   }
@@ -426,6 +426,9 @@ uniform float uFeatherJitterAmp; // extra feather per shell (e.g. 0.003)
 
 uniform float uShellOffsetScale; // per-shell offset scale (was hardcoded 0.0015)
 
+uniform sampler2D uWind;     // RG = (U, V) wind components (normalized 0..1)
+uniform float uClumpiness;
+
 // tiny, cheap hash → [0,1)
 float hash31(vec3 p){
   return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
@@ -447,6 +450,11 @@ void main(){
   float shellF = float(vShell);
   float offs   = uShellOffsetScale * shellF;  
   uv += vec2(sin(123.45*shellF), cos(456.78*shellF)) * offs;
+
+  // --- Get local wind direction (−1..1 range) ---
+vec2 windRG = texture(uWind, uv).rg;
+vec2 wind = normalize(windRG * 2.0 - 1.0);
+
 
   // --- Data + carrier ---
   float cov = texture(uCov,  uv).r;     // ERA5 coverage 0..1 (raw, no gamma/mips)
@@ -490,6 +498,7 @@ type Props = {
   iterations?: number;                       // threshold iterations (e.g., 10)
   pressureLevel: number;
     gphTex?: THREE.Texture | null;  // geopotential height or DEM, R in [0..1]
+    windTex?: THREE.Texture | null;
 };
 
 export default function CloudCoverLayer({
@@ -505,12 +514,17 @@ export default function CloudCoverLayer({
   tilePx = 32,
   iterations = 10,
   gphTex,
+  windTex,
 }: Props) {
   const meshRef = useRef<THREE.Mesh | null>(null);
   const matRef  = useRef<THREE.ShaderMaterial | null>(null);
   const pipelineRef = useRef<CloudPipelineManager | null>(null);
   const lookTexRef  = useRef<THREE.Texture | null>(null);
   const era5CoverageRawRef   = useRef<THREE.Texture | null>(null);
+const volGroupRef = useRef<THREE.Group | null>(null);           // holds proxy + ring meshes
+const rBaseRef = useRef<number>(0);
+const rTopRef  = useRef<number>(0);
+
 
   useEffect(() => {
     if (!enabled || !renderer || !scene || !camera) return;
@@ -574,21 +588,82 @@ export default function CloudCoverLayer({
       // ---- Build/refresh the visible cloud mesh ----
       // 2) In tryRunPipelineAndAttach() — build/refresh the visible cloud mesh
 const globeRadius = getGlobeRadius();
-const SHELLS = 10;
+const SHELLS = 0;
+// remove any previous group
+if (volGroupRef.current) {
+  scene!.remove(volGroupRef.current);
+  volGroupRef.current.children.forEach(c => {
+    // @ts-ignore
+    c.geometry?.dispose?.();
+    // @ts-ignore
+    c.material?.dispose?.();
+  });
+  volGroupRef.current = null;
+}
+
+// decide initial radii (editable later)
+rBaseRef.current = globeRadius + 1.0;
+rTopRef.current  = globeRadius + 30.0;
+
+// make a group: [proxyMesh (translucent)] + [ringBase, ringTop] for verification
+const g = new THREE.Group();
+
+// 1) proxy sphere at R_top (solid, translucent)
+{
+  const geom = new THREE.SphereGeometry(1, 256, 128); // unit; we’ll scale
+  const mat  = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.15,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  });
+  const proxy = new THREE.Mesh(geom, mat);
+  proxy.scale.setScalar(rTopRef.current); // radius = R_top
+  proxy.renderOrder = 14;
+  g.add(proxy);
+}
+
+// 2) thin ring at R_base (wireframe)
+{
+  const geom = new THREE.SphereGeometry(1, 64, 32);
+  const wire = new THREE.WireframeGeometry(geom);
+  const mat  = new THREE.LineBasicMaterial({ color: 0xFFD54F, transparent: true, opacity: 0.9 });
+  const ring = new THREE.LineSegments(wire, mat);
+  ring.scale.setScalar(rBaseRef.current);
+  ring.renderOrder = 15;
+  g.add(ring);
+}
+
+// 3) thin ring at R_top (wireframe)
+{
+  const geom = new THREE.SphereGeometry(1, 64, 32);
+  const wire = new THREE.WireframeGeometry(geom);
+  const mat  = new THREE.LineBasicMaterial({ color: 0x64B5F6, transparent: true, opacity: 0.9 });
+  const ring = new THREE.LineSegments(wire, mat);
+  ring.scale.setScalar(rTopRef.current);
+  ring.renderOrder = 15;
+  g.add(ring);
+}
+
+g.frustumCulled = false;
+scene!.add(g);
+volGroupRef.current = g;
 
 // we’ll drive radius in the shader, so use a unit sphere here
 const geom = new THREE.SphereGeometry(1, 256, 128);
 
 if (!meshRef.current) {
   const mat = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
+  glslVersion: THREE.GLSL3,
     vertexShader:   CLOUD_SHELL_VERT,   // <- use new vert
     fragmentShader: CLOUD_FRAG,         // same frag
-    transparent: true,
-    depthWrite: false,
+  transparent: true,
+  depthWrite: false,
     depthTest: true,
     blending: THREE.NormalBlending,
-    uniforms: {
+  uniforms: {
       // existing uniforms
       uOpacity:  { value: opacity },  
       uLook:     { value: lookTexRef.current },
@@ -684,19 +759,19 @@ paneHubDisposeCleanup.push(
 
 
   // create instanced mesh with 5 instances
-  const inst = new THREE.InstancedMesh(geom, mat, SHELLS);
+  // const inst = new THREE.InstancedMesh(geom, mat, SHELLS);
 
-  // set per-instance matrices to identity
-  const m = new THREE.Matrix4();
-  for (let i = 0; i < SHELLS; i++) inst.setMatrixAt(i, m);
+  // // set per-instance matrices to identity
+  // const m = new THREE.Matrix4();
+  // for (let i = 0; i < SHELLS; i++) inst.setMatrixAt(i, m);
 
-  inst.instanceMatrix.needsUpdate = true;
-  inst.frustumCulled = false;
-  inst.renderOrder   = 15;
+  // inst.instanceMatrix.needsUpdate = true;
+  // inst.frustumCulled = false;
+  // inst.renderOrder   = 15;
 
-  scene!.add(inst);
-  meshRef.current = inst as unknown as THREE.Mesh;  // keep your refs happy
-  matRef.current  = mat;
+  // scene!.add(inst);
+  // meshRef.current = inst as unknown as THREE.Mesh;  // keep your refs happy
+  // matRef.current  = mat;
 } else {
   const mat = matRef.current!;
   mat.uniforms.uLook.value    = lookTexRef.current;
@@ -719,6 +794,17 @@ paneHubDisposeCleanup.push(
         if (d) d();
       }
 
+      if (volGroupRef.current && scene) {
+  scene.remove(volGroupRef.current);
+  volGroupRef.current.children.forEach(c => {
+    // @ts-ignore
+    c.geometry?.dispose?.();
+    // @ts-ignore
+    c.material?.dispose?.();
+  });
+  volGroupRef.current = null;
+}
+
       pipelineRef.current?.dispose(); pipelineRef.current = null;
       if (meshRef.current && scene) scene.remove(meshRef.current);
       meshRef.current?.geometry.dispose();
@@ -728,7 +814,7 @@ paneHubDisposeCleanup.push(
       era5CoverageRawRef.current?.dispose();  era5CoverageRawRef.current  = null;
       lookTexRef.current?.dispose(); lookTexRef.current = null;
     };
-  }, [enabled, url, renderer, scene, camera, opacity, feather, eraSize.w, eraSize.h, tilePx, iterations, gphTex]);
+  }, [enabled, url, renderer, scene, camera, opacity, feather, eraSize.w, eraSize.h, tilePx, iterations, gphTex, windTex]);
 
   // Live param updates
   useEffect(() => { if (matRef.current) matRef.current.uniforms.uOpacity.value = opacity; }, [opacity]);

@@ -99,6 +99,22 @@ class PaneHubClass {
   private pane: Pane | null = null;
   private tabs: { pages?: unknown[] } | null = null;
   private folders = new Map<string, FolderApi>();
+  private folderRefCounts = new Map<string, number>();
+
+  private inc(key: string) {
+  this.folderRefCounts.set(key, (this.folderRefCounts.get(key) ?? 0) + 1);
+}
+private decAndMaybeDispose(key: string) {
+  const n = (this.folderRefCounts.get(key) ?? 1) - 1;
+  if (n <= 0) {
+    this.folderRefCounts.delete(key);
+    const f = this.folders.get(key);
+    if (f) f.dispose();
+    this.folders.delete(key);
+  } else {
+    this.folderRefCounts.set(key, n);
+  }
+}
 
   attach(container: HTMLElement): void {
     if (this.pane) return;
@@ -169,6 +185,9 @@ class PaneHubClass {
   ): () => void {
     const folder = this.getFolder(folderName, tabIndex);
     const disposers: Array<() => void> = [];
+
+    const key = this.keyFor(folderName, tabIndex);
+    this.inc(key);
 
     Object.entries(specs).forEach(([label, spec]) => {
       if (spec.type === "button") {
@@ -317,7 +336,7 @@ class PaneHubClass {
 
     return () => {
       disposers.forEach((d) => d());
-      folder.dispose();
+      this.decAndMaybeDispose(key);
     };
   }
 

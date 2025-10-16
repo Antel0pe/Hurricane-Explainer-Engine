@@ -600,6 +600,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const simDimsRef = useRef<{ w: number; h: number } | null>(null);
   const windLayersSetRef = useRef<Set<WindLayerAPI>>(new Set());
   const [engineReady, setEngineReady] = useState(false);
+  const [wind250Tex, setWind250Tex] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -1326,6 +1327,7 @@ camera.up.copy(U_cam);
           SIM_FRAG={SIM_FRAG}
           onReady={handleWindReady}
           onRemove={handleWindRemove}
+          setWindTex={setWind250Tex}
         // zOffset={0}
         />)}
 
@@ -1432,6 +1434,7 @@ camera.up.copy(U_cam);
         controls={controlsRef.current}
         gphTex={heightTexRef.current}
         pressureLevel={250}     // if your component accepts it
+        windTex={wind250Tex}
       />
     )}
 
