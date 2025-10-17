@@ -508,8 +508,6 @@ uniform float uRTop;         // outer radius
 uniform float uOpacity;      // final alpha multiplier
 
 // minimal knobs (hard values are fine for this step)
-uniform int   uNumSteps;     // e.g., 12
-uniform float uDensityScale; // e.g., 1.5
 uniform int   uShowSegmentOnly;
 uniform float uThicknessScale; 
 uniform float uStepLen;   // world meters per step (e.g., 5000.0 if your unit==m)
@@ -521,6 +519,11 @@ uniform float uNoiseFreq;    // 1/meters, e.g. 1.0/30000.0 (~30 km features)
 uniform float uNoiseAmp;     // 0..1, e.g. 0.6
 uniform float uNoiseBias;    // 0..1, e.g. 0.4 (keeps extinction positive)
 uniform float uAniso;        // 0..1, squash along planet normal, e.g. 0.6
+
+uniform float uJittAmp;   // 0..1, fraction of ds to jitter (try 0.3)
+uniform float uJittCell;  // meters: world scale for the jitter seed (try 50000.0)
+
+
 
 // ---- helpers: hash / fade / value noise 3D -----------------------
 float hash13(vec3 p) {
@@ -633,10 +636,28 @@ if (outside) {
   float dt = (t1 - t0) / float(N);
 
   // keep a small world-stable jitter (0..1) to dither steps
-  float j = hash13(vec3(rd * 97.0 + normalize(ro) * 13.0));
+  // float j = hash13(vec3(rd * 97.0 + normalize(ro) * 13.0));
+  // float j = 0.0;
   //     // --- minimal world-metric marching (no noise yet) ---
-  float t = t0 + j * ds;
+  // float t = t0 + j * ds;
   
+// ----- WORLD-ANCHORED JITTER -----
+// Use the segment midpoint in world space as a stable seed.
+// This is continuous (no floor), so no octant seams.
+vec3 segMid = ro + rd * (t0 + 0.5 * (t1 - t0));   // world midpoint of [t0,t1]
+vec3 seed   = segMid * (1.0 / max(uJittCell, 1.0)); // scale to a gentle world frequency
+// Mix in spherical direction to avoid pure Cartesian bias
+vec3 nMid   = normalize(segMid);
+float j     = hash13(seed + nMid * 7.13);  // 0..1, stable in world space
+
+// Center to [-0.5, +0.5], then scale by a fraction of ds
+float jitter = (j - 0.5) * uJittAmp * ds;
+
+// Start-of-march with world-anchored, tiny jitter
+float t = t0 + jitter;
+
+
+
   float T = 1.0;  // transmittance
 
 
@@ -736,15 +757,6 @@ if (uShowSegmentOnly == 12) {
 
 
   float firstTi = -1.0;  // records depth of the first meaningful contribution
-
-
-  // simple world-space noise parameters (fixed for this step)
-  float freq       = 8.0;   // feature size
-  float vertSquash = 0.65;  // puffiness
-  float thresh     = 0.50;  // on/off threshold
-  float edge       = 0.12;  // softness
-
-
 
   for (int i = 0; i < 1024; ++i) {
     if (i >= N) break;
@@ -942,7 +954,7 @@ const drawH = Math.round(size.y * dpr);
     vertexShader:   CLOUD_PROXY_VERT,
     fragmentShader: CLOUD_PROXY_FRAG,
     transparent: true,
-    depthTest: false,
+    depthTest: true,
     depthWrite: false,
     blending: THREE.NormalBlending,
     side: THREE.DoubleSide,
@@ -950,20 +962,20 @@ const drawH = Math.round(size.y * dpr);
       uCamPos:  { value: camera!.position.clone() },
       uRBase:   { value: rBaseRef.current },
       uRTop:    { value: rTopRef.current },
-      uOpacity: { value: 0.8 },
-          uNumSteps:     { value: 12 },
-    uDensityScale: { value: 1.6 },
+      uOpacity: { value: 0.99 },
   uShowSegmentOnly: { value: 0 },      // start with ruler stripes
   uThicknessScale:  { value: 0.02 },   // used by mode 2 (debug)
   // uStepLen:         { value: 150.0 }, // 5 km per step (adjust to your units)
-  uStepLen:         { value: 150.0 },
+  uStepLen:         { value: 1.0 },
   uMaxSteps:        { value: 256 },
   uSigma:           { value: 0.05  }, // extinction per meter (tune)
     uUseNoise:  { value: 1 },
-  uNoiseFreq: { value: 0.04 }, // ~30 km features (match your world units)
-  uNoiseAmp:  { value: 1.0 },
-  uNoiseBias: { value: 0.34 },
+  uNoiseFreq: { value: 0.06 }, // ~30 km features (match your world units)
+  uNoiseAmp:  { value: 6.0 },
+  uNoiseBias: { value: 0.1 },
   uAniso:     { value: 0.6 },
+  uJittAmp: { value: 0.3 },
+  uJittCell: { value: 50000 }
     }
   });
   mat.toneMapped = false;
@@ -978,14 +990,14 @@ const drawH = Math.round(size.y * dpr);
         type: "number",
         uniform: "uNoiseFreq",
         min: 1.0 / 200000.0,  // ~1 per 200k world units
-        max: 1.0,      // 20.0 → very fine detail
+        max: 0.1,      // 20.0 → very fine detail
         step: 0.00001,        // fine control
       },
       uNoiseAmp: {
         type: "number",
         uniform: "uNoiseAmp",
         min: 0.0,
-        max: 1.0,
+        max: 50.0,
         step: 0.01,
       },
       uNoiseBias: {
@@ -1004,10 +1016,13 @@ const drawH = Math.round(size.y * dpr);
         step: 0.01,
       },
             // --- Marching controls (useful while balancing brightness & detail) ---
-      StepLen_WorldUnits: { type: "number", uniform: "uStepLen", min: 0, max: 1000.0, step: 1.0 },
+      StepLen_WorldUnits: { type: "number", uniform: "uStepLen", min: 0, max: 1, step: 0.01},
       Sigma_Extinction:   { type: "number", uniform: "uSigma",   min: 1e-5,  max: 1.0,    step: 1e-5  },
 
-
+      uMaxSteps: { type: "number", uniform: "uMaxSteps", min: 0, max: 1000.0, step: 1.0 },
+      uJittAmp: { type: "number", uniform: "uJittAmp", min: 0, max: 1.0, step: 0.01},
+      uJittCell: { type: "number", uniform: "uJittCell", min: 0, max: 1.0, step: 0.001 },
+      uOpacity: { type: "number", uniform: "uOpacity", min: 0, max: 1.0, step: 0.01 },
     }, mat))
 
 
