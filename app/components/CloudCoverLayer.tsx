@@ -510,6 +510,17 @@ uniform float uOpacity;      // final alpha multiplier
 // minimal knobs (hard values are fine for this step)
 uniform int   uNumSteps;     // e.g., 12
 uniform float uDensityScale; // e.g., 1.5
+uniform int   uShowSegmentOnly;
+uniform float uThicknessScale; 
+uniform float uStepLen;   // world meters per step (e.g., 5000.0 if your unit==m)
+uniform int   uMaxSteps;  // hard cap (e.g., 128)
+uniform float uSigma;     // extinction coeff per meter (e.g., 0.0002)
+
+uniform int   uUseNoise;     // 0 = constant extinction (baseline), 1 = world-metric noise
+uniform float uNoiseFreq;    // 1/meters, e.g. 1.0/30000.0 (~30 km features)
+uniform float uNoiseAmp;     // 0..1, e.g. 0.6
+uniform float uNoiseBias;    // 0..1, e.g. 0.4 (keeps extinction positive)
+uniform float uAniso;        // 0..1, squash along planet normal, e.g. 0.6
 
 // ---- helpers: hash / fade / value noise 3D -----------------------
 float hash13(vec3 p) {
@@ -577,21 +588,23 @@ void main() {
   bool  hasInner = false;
   float ovA = 0.0, ovB = 0.0;
 
-  if (outside) {
-    // *** NEAR-LOBE ONLY ***
-    // march from outer enter up to (but not past) inner enter
-    float enterOuter = max(outHit.x, 0.0);
-    float exitOuter  = outHit.y;
-    float enterInner = inHit.x;
+if (outside) {
+  // *** NEAR-LOBE ONLY ***
+  float enterOuter = max(outHit.x, 0.0);
 
-    t0 = enterOuter;
-    t1 = min(exitOuter, enterInner); // stop before inner core
+  // --- compute impact parameter and near-lobe shell thickness ---
+  float b  = dot(ro, rd);                 // signed distance along rd to closest approach
+  float d2 = max(dot(ro, ro) - b*b, 0.0); // squared perpendicular distance to origin
 
-    if (!(t1 > t0)) discard; // nothing on near side
+  float sTop  = sqrt(max(uRTop*uRTop   - d2, 0.0));
+  float sBase = sqrt(max(uRBase*uRBase - d2, 0.0));  // =0 if inner is missed
+  float thickness = max(sTop - sBase, 0.0);
 
-    // no inner overlap to subtract (we stopped before it)
-    hasInner = false;
+  t0 = enterOuter;
+  t1 = t0 + thickness;
 
+  if (!(t1 > t0)) discard;
+  hasInner = false;   // we’re explicitly baking the hollow into 'thickness'
   } else if (insideShell) {
     // already in shell: march until outer exit; subtract any inner overlap ahead
     t0 = 0.0;
@@ -603,18 +616,125 @@ void main() {
 
   } else {
     // under base (inside inner): usually nothing useful; discard for this pass
-    discard;
+    // Start at the inner exit and march to the outer exit.
+    // This makes the layer visible when the camera is under the base.
+    t0 = max(inHit.y, 0.0);
+    t1 = outHit.y;
+    hasInner = false;
+    if (!(t1 > t0)) discard;
   }
 
-  // tiny step count and uniform step size
-  int   N  = uNumSteps;
+  
+  // --- metric step sizing ---
+  float L = max(t1 - t0, 0.0);
+  float ds = max(uStepLen, 1e-3);
+  int   N  = int(ceil(L / ds));
+  N = min(N, uMaxSteps);
   float dt = (t1 - t0) / float(N);
 
-  // world-stable jitter seeded by ray direction (and a tiny cam term)
+  // keep a small world-stable jitter (0..1) to dither steps
   float j = hash13(vec3(rd * 97.0 + normalize(ro) * 13.0));
-  float t = t0 + j * dt;
+  //     // --- minimal world-metric marching (no noise yet) ---
+  float t = t0 + j * ds;
+  
+  float T = 1.0;  // transmittance
 
-  float alpha = 0.0;
+
+  // --- SEGMENT-ONLY DEBUGS (no marching) ---
+  if (uShowSegmentOnly == 1) {
+    float depthFrac = (L > 1e-6) ? 0.5 : 0.0;  // center-of-segment cue
+    vec3  debugCol  = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), depthFrac);
+    fragColor = vec4(debugCol, uOpacity);
+    return;
+  }
+
+  if (uShowSegmentOnly == 2) {
+    // thickness-as-alpha: beer-lambert with uniform sigma
+    float a = 1.0 - exp(-L * max(uThicknessScale, 0.0));
+    vec3  col = vec3(0.75);
+    fragColor = vec4(col, a * uOpacity);
+    return;
+  }
+
+  if (uShowSegmentOnly == 3) {
+    // ruler stripes every step length: visualize metric spacing on screen
+    float tStart = t0 + j * ds;
+    // where does the ray hit at the center of the segment? (for color ramp)
+    float centerT = t0 + 0.5 * L;
+    float depthFrac = (L > 1e-6) ? clamp((centerT - t0) / max(L, 1e-3), 0.0, 1.0) : 0.0;
+
+    // stripe color flips each step index
+    int stripeIndex = int(floor((centerT - tStart) / ds));
+    float flip = mod(float(max(stripeIndex,0)), 2.0);
+
+    vec3 baseCol = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), depthFrac);
+    vec3 col     = mix(baseCol, vec3(0.95), step(0.5, flip)); // alternate light band
+    // opacity from thickness so it feels volumetric
+    float a = 1.0 - exp(-L * max(uThicknessScale, 0.0));
+
+    fragColor = vec4(col, a * uOpacity);
+    return;
+  }
+
+  if (uShowSegmentOnly == 10) {
+  // subtract inner hollow if any
+  float effL = L;
+  if (hasInner) effL = max(L - max(ovB - ovA, 0.0), 0.0);
+
+  // map meters to 0..1 with a simple scale; tune 1e-5 .. 1e-3 depending on your units
+  float k = 0.01; // adjust to see gradient
+  float v = clamp(effL * k, 0.0, 1.0);
+
+  // blue->red ramp by thickness
+  vec3 col = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), v);
+
+  // fully opaque so depth patterns are unmissable
+  fragColor = vec4(col, 1.0);
+  return;
+}
+
+// >>> MODE 11: case visualization (no marching)
+if (uShowSegmentOnly == 11) {
+  vec3 col = vec3(0.0);
+  if (outside)        col = vec3(0.0, 1.0, 0.0); // green
+  else if (insideShell) col = vec3(1.0, 1.0, 0.0); // yellow
+  else                 col = vec3(1.0, 0.0, 1.0); // magenta (inside inner → we handled)
+  fragColor = vec4(col, 1.0);
+  return;
+}
+
+// >>> MODE 12: true marching stripes (alternating bands along the ray)
+if (uShowSegmentOnly == 12) {
+  float T = 1.0;
+  float tStart = t0 + hash13(vec3(rd * 97.0 + normalize(ro) * 13.0)) * ds;
+
+  // alternate two colors per step index
+  vec3 colA = vec3(0.15, 0.75, 0.95);
+  vec3 colB = vec3(0.95, 0.75, 0.15);
+
+  // we'll composite the *nearest* band color we encounter (front-to-back)
+  bool wrote = false;
+  vec3 outCol = vec3(0.0);
+
+  for (int i = 0; i < 1024; ++i) {
+    if (i >= N) break;
+    float ti = tStart + float(i) * ds;
+    if (ti < t0 || ti > t1) continue;
+    if (hasInner && ti > ovA && ti < ovB) continue;
+
+    int idx = i; // per-step index along the ray
+    vec3 c = ( (idx & 1) == 0 ) ? colA : colB;
+
+    // take the first valid step color and stop (front-most band)
+    if (!wrote) { outCol = c; wrote = true; }
+  }
+
+  if (!wrote) discard; // nothing in shell for this pixel
+  fragColor = vec4(outCol, 1.0); // opaque: you should see clear bands shifting with angle
+  return;
+}
+
+
   float firstTi = -1.0;  // records depth of the first meaningful contribution
 
 
@@ -624,37 +744,56 @@ void main() {
   float thresh     = 0.50;  // on/off threshold
   float edge       = 0.12;  // softness
 
-  // march
-  for (int i = 0; i < 64; ++i) { // hard loop cap
+
+
+  for (int i = 0; i < 1024; ++i) {
     if (i >= N) break;
 
-    float ti = t + float(i) * dt;
-    if (hasInner && ti > ovA && ti < ovB) continue; // skip the hollow
+    float ti = t + float(i) * ds;
 
-vec3 p   = ro + ti * rd;
-vec3 dir = normalize(p);
-vec3 q = vec3(dir.x, dir.y * vertSquash, dir.z) * freq;
-float n = noise3D(q);
-    float m = smoothstep(thresh - edge, thresh + edge, n); // 0..1
-    if (firstTi < 0.0 && m > 0.001) firstTi = ti;
+    // skip the inner hollow portion if applicable
+    if (hasInner && ti > ovA && ti < ovB) continue;
+
+    // constant extinction per meter (no noise yet)
+    // float tau_i = uSigma * ds;        // optical thickness for this step
+    // T *= exp(-tau_i);
+    float tau_i;
+if (uUseNoise == 0) {
+  // baseline: constant extinction
+  tau_i = uSigma * ds;
+} else {
+  // --- world-metric noise ---
+  vec3 p = ro + ti * rd;            // world-space sample position
+  vec3 n = normalize(p);            // local "up" (planet normal)
+
+  // anisotropic world-metric coordinate: squash along n
+  vec3 q = p * uNoiseFreq;
+  q -= n * dot(q, n) * (1.0 - uAniso);
+
+  // single-octave value noise in [0,1]
+  float nval = noise3D(q);
+
+  // remap to [0,1] with bias/amp (stay positive)
+  float m = clamp(uNoiseBias + uNoiseAmp * (nval - 0.5) * 2.0, 0.0, 1.0);
+
+  tau_i = uSigma * m * ds;
+}
+T *= exp(-tau_i);
 
 
-    // accumulate opacity (front-to-back)
-    alpha += (1.0 - alpha) * m * uDensityScale * dt;
-    if (alpha > 0.985) break;
+    if (1.0 - T > 0.985) break;       // early out when dense enough
   }
 
+  // OLD:
+  float alpha = (1.0 - T);
   if (alpha <= 0.001) discard;
+  vec3 col = vec3(0.9);
+  fragColor = vec4(col, alpha * uOpacity);
 
-  // flat grey color for now; alpha scaled by uOpacity
-  // vec3 col = vec3(0.95);
-  // fragColor = vec4(col, clamp(alpha, 0.0, 1.0) * uOpacity);
-  // DEBUG: color = where along the shell we first "hit" density
-float depthFrac = (firstTi >= 0.0) ? clamp((firstTi - t0) / max(t1 - t0, 1e-3), 0.0, 1.0) : 0.0;
-// grayscale or a simple blue→red ramp helps you *see* near vs far inside the volume
-vec3 debugCol = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), depthFrac);
-fragColor = vec4(debugCol, clamp(alpha, 0.0, 1.0) * uOpacity);
-
+  // NEW: show the accumulated alpha directly (no discard)
+  // float alpha = (1.0 - T);
+  // vec3  col   = vec3(alpha);     // grayscale = “how much density”
+  // fragColor   = vec4(col, alpha * uOpacity);
 }
 
 `;
@@ -803,7 +942,7 @@ const drawH = Math.round(size.y * dpr);
     vertexShader:   CLOUD_PROXY_VERT,
     fragmentShader: CLOUD_PROXY_FRAG,
     transparent: true,
-    depthTest: true,
+    depthTest: false,
     depthWrite: false,
     blending: THREE.NormalBlending,
     side: THREE.DoubleSide,
@@ -814,14 +953,67 @@ const drawH = Math.round(size.y * dpr);
       uOpacity: { value: 0.8 },
           uNumSteps:     { value: 12 },
     uDensityScale: { value: 1.6 },
+  uShowSegmentOnly: { value: 0 },      // start with ruler stripes
+  uThicknessScale:  { value: 0.02 },   // used by mode 2 (debug)
+  // uStepLen:         { value: 150.0 }, // 5 km per step (adjust to your units)
+  uStepLen:         { value: 150.0 },
+  uMaxSteps:        { value: 256 },
+  uSigma:           { value: 0.05  }, // extinction per meter (tune)
+    uUseNoise:  { value: 1 },
+  uNoiseFreq: { value: 0.04 }, // ~30 km features (match your world units)
+  uNoiseAmp:  { value: 1.0 },
+  uNoiseBias: { value: 0.34 },
+  uAniso:     { value: 0.6 },
     }
   });
   mat.toneMapped = false;
 
+  paneHubDisposeCleanup.push(
+  PaneHub.bind(
+    `3d cloud cover`,
+    {
+      uNoiseFreq: {
+        // uNoiseFreq = 1 / feature_size_in_world_units
+        // very wide range so you can sweep from planet-scale blobs to tiny detail
+        type: "number",
+        uniform: "uNoiseFreq",
+        min: 1.0 / 200000.0,  // ~1 per 200k world units
+        max: 1.0,      // 20.0 → very fine detail
+        step: 0.00001,        // fine control
+      },
+      uNoiseAmp: {
+        type: "number",
+        uniform: "uNoiseAmp",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+      },
+      uNoiseBias: {
+        type: "number",
+        uniform: "uNoiseBias",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+      },
+      uAniso: {
+        // 0 = isotropic puffs, 1 = fully flattened along planet normal
+        type: "number",
+        uniform: "uAniso",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+      },
+            // --- Marching controls (useful while balancing brightness & detail) ---
+      StepLen_WorldUnits: { type: "number", uniform: "uStepLen", min: 0, max: 1000.0, step: 1.0 },
+      Sigma_Extinction:   { type: "number", uniform: "uSigma",   min: 1e-5,  max: 1.0,    step: 1e-5  },
+
+
+    }, mat))
+
 
   const proxy = new THREE.Mesh(geom, mat);
   proxy.scale.setScalar(rTopRef.current);   // keep the sphere scaled to R_top (nice for debugging)
-  proxy.renderOrder = 14;
+  proxy.renderOrder = 16;
   proxy.userData.isCloudProxy = true;
   g.add(proxy);
 }
