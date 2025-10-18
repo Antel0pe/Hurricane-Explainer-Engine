@@ -508,7 +508,6 @@ uniform float uRTop;         // outer radius
 uniform float uOpacity;      // final alpha multiplier
 
 // minimal knobs (hard values are fine for this step)
-uniform int   uShowSegmentOnly;
 uniform float uThicknessScale; 
 uniform float uStepLen;   // world meters per step (e.g., 5000.0 if your unit==m)
 uniform int   uMaxSteps;  // hard cap (e.g., 128)
@@ -522,6 +521,38 @@ uniform float uAniso;        // 0..1, squash along planet normal, e.g. 0.6
 
 uniform float uJittAmp;   // 0..1, fraction of ds to jitter (try 0.3)
 uniform float uJittCell;  // meters: world scale for the jitter seed (try 50000.0)
+
+// ---- ERA5 mask inputs (2D) ----
+uniform sampler2D uCov;     // ERA5 cloud cover (0..1), DATA texture (NEAREST, no mips)
+uniform sampler2D uLook;    // correlated carrier (tileable noise/fBm), linear, no mips
+uniform float uK;           // 0..1: mix coverage floor vs. quantile mask (try 0.7)
+uniform float uEps;         // threshold feather (e.g., 0.02)
+uniform float uLonOffset;   // wrap shift for your equirect
+uniform bool  uFlipV;       // ERA5 V flip if needed
+
+uniform int   uCovHybrid;     // 0 off, 1 on
+uniform int   uCovSamples;    // 3 or 5
+uniform float uCovSoftK;      // soft-max sharpness (e.g., 6.0..12.0)
+
+uniform float uCovPow;        // >=1, emphasizes high coverage (try 1.5..2.2)
+uniform float uCovFloor;      // small floor so columns never zero (0.03..0.08)
+uniform float uBodyThresh;    // threshold for 3D puff (~0.48..0.58)
+uniform float uBodyEdge;      // edge softness (~0.10..0.20)
+uniform float uBodyGamma;     // post-contrast (1.0..2.0), higher = chunkier
+
+
+
+// map world point to equirect UV (same math you used before)
+vec2 worldToUV(vec3 p){
+  vec3 n = normalize(p);
+  float lat = asin(clamp(n.y, -1.0, 1.0));
+  float lon = atan(-n.z, n.x);
+  float u = fract(lon / (2.0*3.141592653589793) + 0.5 + uLonOffset);
+  float v = 0.5 - lat / 3.141592653589793;
+  if (uFlipV) v = 1.0 - v;
+  return vec2(u, v);
+}
+
 
 
 
@@ -657,104 +688,47 @@ float jitter = (j - 0.5) * uJittAmp * ds;
 float t = t0 + jitter;
 
 
+// ---- HYBRID ERA5 MASK (few samples along segment) ----
+float m2D_hyb = 0.0;
+if (uCovHybrid == 1) {
+  int S = (uCovSamples <= 0) ? 3 : uCovSamples;
+  float acc = 0.0;
+  float k   = max(uCovSoftK, 1.0);
+
+  for (int si = 0; si < 5; ++si) {
+    if (si >= S) break;
+    float w = (S == 3) ? (si==0 ? 0.15 : si==1 ? 0.50 : 0.85)
+                       : (si==0 ? 0.05 : si==1 ? 0.275 : si==2 ? 0.50 : si==3 ? 0.725 : 0.95);
+    vec3 ps = ro + rd * (t0 + w * L);
+    // project to a fixed reference radius to avoid horizon wrap
+    float Rref = 0.5 * (uRBase + uRTop);
+    vec3  psRef = normalize(ps) * Rref;
+    vec2 uv = worldToUV(psRef);
+
+    float cov = texture(uCov,  uv).r;
+    float Lc  = texture(uLook, uv).r;
+    float tQ  = 1.0 - cov;
+    float mk  = smoothstep(tQ - uEps, tQ + uEps, Lc);
+    float msi = mix(cov, mk * cov, uK);
+
+    acc += exp(k * clamp(msi, 0.0, 1.0));
+  }
+  m2D_hyb = log(acc / float(S)) / k;
+} else {
+  float Rref = 0.5 * (uRBase + uRTop);
+  vec3  midP = ro + rd * (t0 + 0.5 * L);
+  vec3  midRef = normalize(midP) * Rref;
+  vec2  uvMid = worldToUV(midRef);
+  float cov = texture(uCov,  uvMid).r;
+  float Lc  = texture(uLook, uvMid).r;
+  float tQ  = 1.0 - cov;
+  float mask = smoothstep(tQ - uEps, tQ + uEps, Lc);
+  m2D_hyb = mix(cov, mask * cov, uK);
+}
+
+
 
   float T = 1.0;  // transmittance
-
-
-  // --- SEGMENT-ONLY DEBUGS (no marching) ---
-  if (uShowSegmentOnly == 1) {
-    float depthFrac = (L > 1e-6) ? 0.5 : 0.0;  // center-of-segment cue
-    vec3  debugCol  = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), depthFrac);
-    fragColor = vec4(debugCol, uOpacity);
-    return;
-  }
-
-  if (uShowSegmentOnly == 2) {
-    // thickness-as-alpha: beer-lambert with uniform sigma
-    float a = 1.0 - exp(-L * max(uThicknessScale, 0.0));
-    vec3  col = vec3(0.75);
-    fragColor = vec4(col, a * uOpacity);
-    return;
-  }
-
-  if (uShowSegmentOnly == 3) {
-    // ruler stripes every step length: visualize metric spacing on screen
-    float tStart = t0 + j * ds;
-    // where does the ray hit at the center of the segment? (for color ramp)
-    float centerT = t0 + 0.5 * L;
-    float depthFrac = (L > 1e-6) ? clamp((centerT - t0) / max(L, 1e-3), 0.0, 1.0) : 0.0;
-
-    // stripe color flips each step index
-    int stripeIndex = int(floor((centerT - tStart) / ds));
-    float flip = mod(float(max(stripeIndex,0)), 2.0);
-
-    vec3 baseCol = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), depthFrac);
-    vec3 col     = mix(baseCol, vec3(0.95), step(0.5, flip)); // alternate light band
-    // opacity from thickness so it feels volumetric
-    float a = 1.0 - exp(-L * max(uThicknessScale, 0.0));
-
-    fragColor = vec4(col, a * uOpacity);
-    return;
-  }
-
-  if (uShowSegmentOnly == 10) {
-  // subtract inner hollow if any
-  float effL = L;
-  if (hasInner) effL = max(L - max(ovB - ovA, 0.0), 0.0);
-
-  // map meters to 0..1 with a simple scale; tune 1e-5 .. 1e-3 depending on your units
-  float k = 0.01; // adjust to see gradient
-  float v = clamp(effL * k, 0.0, 1.0);
-
-  // blue->red ramp by thickness
-  vec3 col = mix(vec3(0.1,0.2,0.9), vec3(0.9,0.2,0.1), v);
-
-  // fully opaque so depth patterns are unmissable
-  fragColor = vec4(col, 1.0);
-  return;
-}
-
-// >>> MODE 11: case visualization (no marching)
-if (uShowSegmentOnly == 11) {
-  vec3 col = vec3(0.0);
-  if (outside)        col = vec3(0.0, 1.0, 0.0); // green
-  else if (insideShell) col = vec3(1.0, 1.0, 0.0); // yellow
-  else                 col = vec3(1.0, 0.0, 1.0); // magenta (inside inner → we handled)
-  fragColor = vec4(col, 1.0);
-  return;
-}
-
-// >>> MODE 12: true marching stripes (alternating bands along the ray)
-if (uShowSegmentOnly == 12) {
-  float T = 1.0;
-  float tStart = t0 + hash13(vec3(rd * 97.0 + normalize(ro) * 13.0)) * ds;
-
-  // alternate two colors per step index
-  vec3 colA = vec3(0.15, 0.75, 0.95);
-  vec3 colB = vec3(0.95, 0.75, 0.15);
-
-  // we'll composite the *nearest* band color we encounter (front-to-back)
-  bool wrote = false;
-  vec3 outCol = vec3(0.0);
-
-  for (int i = 0; i < 1024; ++i) {
-    if (i >= N) break;
-    float ti = tStart + float(i) * ds;
-    if (ti < t0 || ti > t1) continue;
-    if (hasInner && ti > ovA && ti < ovB) continue;
-
-    int idx = i; // per-step index along the ray
-    vec3 c = ( (idx & 1) == 0 ) ? colA : colB;
-
-    // take the first valid step color and stop (front-most band)
-    if (!wrote) { outCol = c; wrote = true; }
-  }
-
-  if (!wrote) discard; // nothing in shell for this pixel
-  fragColor = vec4(outCol, 1.0); // opaque: you should see clear bands shifting with angle
-  return;
-}
-
 
   float firstTi = -1.0;  // records depth of the first meaningful contribution
 
@@ -772,23 +746,55 @@ if (uShowSegmentOnly == 12) {
     float tau_i;
 if (uUseNoise == 0) {
   // baseline: constant extinction
-  tau_i = uSigma * ds;
+  tau_i = uSigma * m2D_hyb * ds; 
 } else {
-  // --- world-metric noise ---
-  vec3 p = ro + ti * rd;            // world-space sample position
-  vec3 n = normalize(p);            // local "up" (planet normal)
 
-  // anisotropic world-metric coordinate: squash along n
-  vec3 q = p * uNoiseFreq;
-  q -= n * dot(q, n) * (1.0 - uAniso);
+// Current sample position
+vec3 p  = ro + ti * rd;
 
-  // single-octave value noise in [0,1]
-  float nval = noise3D(q);
+// Height profile (break vertical shafts)
+float hFrac   = clamp((length(p) - uRBase) / max(uRTop - uRBase, 1e-3), 0.0, 1.0);
+float baseSoft= 0.08, topSoft = 0.08;
+float edge    = smoothstep(baseSoft, 1.0 - topSoft, hFrac);
+float midbell = clamp(1.0 - 4.0*(hFrac - 0.5)*(hFrac - 0.5), 0.0, 1.0);
+float mHeight = edge * mix(1.0, midbell, 0.7);
 
-  // remap to [0,1] with bias/amp (stay positive)
-  float m = clamp(uNoiseBias + uNoiseAmp * (nval - 0.5) * 2.0, 0.0, 1.0);
+// ERA5 per-step mask (project to fixed Rref to stabilize horizon)
+float Rref = 0.5 * (uRBase + uRTop);
+vec3  pRef = normalize(p) * Rref;
+vec2  uv   = worldToUV(pRef);
 
-  tau_i = uSigma * m * ds;
+// optional tiny height-dependent shear to decorrelate vertically
+uv.x = fract(uv.x + (hFrac - 0.5) * 0.02);
+
+float cov    = texture(uCov,  uv).r;
+float Lc     = texture(uLook, uv).r;
+float tQ     = 1.0 - cov;
+float mask2D = smoothstep(tQ - uEps, tQ + uEps, Lc);
+float m2D_step = mix(cov, mask2D * cov, uK);
+
+// Combine hybrid envelope + per-step mask
+float m2 = max(
+  pow(clamp(m2D_hyb,  0.0, 1.0), max(uCovPow, 1.0)),
+  pow(clamp(m2D_step, 0.0, 1.0), max(uCovPow, 1.0))
+);
+m2 = max(m2, uCovFloor);
+
+// 3D body (keep features in-range)
+vec3 n = normalize(p);
+vec3 q = p * uNoiseFreq;
+q -= n * dot(q, n) * (1.0 - uAniso);
+float nval = noise3D(q);
+float raw3 = clamp(uNoiseBias + uNoiseAmp * (nval - 0.5) * 2.0, 0.0, 1.0);
+float m3   = smoothstep(uBodyThresh - uBodyEdge, uBodyThresh + uBodyEdge, raw3);
+m3 = pow(m3, max(uBodyGamma, 1.0));
+
+// Final extinction factor
+float m = m2 * m3 * mHeight;
+
+tau_i = uSigma * m * ds;
+T *= exp(-tau_i);
+
 }
 T *= exp(-tau_i);
 
@@ -963,7 +969,6 @@ const drawH = Math.round(size.y * dpr);
       uRBase:   { value: rBaseRef.current },
       uRTop:    { value: rTopRef.current },
       uOpacity: { value: 0.99 },
-  uShowSegmentOnly: { value: 0 },      // start with ruler stripes
   uThicknessScale:  { value: 0.02 },   // used by mode 2 (debug)
   // uStepLen:         { value: 150.0 }, // 5 km per step (adjust to your units)
   uStepLen:         { value: 1.0 },
@@ -975,7 +980,23 @@ const drawH = Math.round(size.y * dpr);
   uNoiseBias: { value: 0.1 },
   uAniso:     { value: 0.6 },
   uJittAmp: { value: 0.3 },
-  uJittCell: { value: 50000 }
+  uJittCell: { value: 50000 },
+
+  // ------------
+        uLook:     { value: lookTexRef.current },
+        uCov:      { value: singleChannelRawEra5 },
+      uEps:      { value: feather },
+      uLonOffset:{ value: 0.25 },
+      uFlipV:    { value: true },
+      uK:        { value: 0.7 },
+uCovSamples: { value: 3 },
+uCovSoftK: { value: 8 },
+uCovHybrid: { value: 1 },
+uCovPow:     { value: 1.7 },   // emphasize higher coverage a bit
+uCovFloor:   { value: 0.05 },  // tiny but nonzero floor
+uBodyThresh: { value: 0.52 },  // where puffs “turn on”
+uBodyEdge:   { value: 0.14 },  // softness of the edge
+uBodyGamma:  { value: 1.4 },   // harden cores slightly
     }
   });
   mat.toneMapped = false;
@@ -1023,6 +1044,15 @@ const drawH = Math.round(size.y * dpr);
       uJittAmp: { type: "number", uniform: "uJittAmp", min: 0, max: 1.0, step: 0.01},
       uJittCell: { type: "number", uniform: "uJittCell", min: 0, max: 1.0, step: 0.001 },
       uOpacity: { type: "number", uniform: "uOpacity", min: 0, max: 1.0, step: 0.01 },
+      uCovSoftK: { type: "number", uniform: "uCovSoftK", min: 0, max: 100.0, step: 1.0 },
+      uCovSamples: { type: "number", uniform: "uCovSamples", min: 0, max: 100.0, step: 1.0 },
+      
+      uCovPow: { type: "number", uniform: "uCovPow", min: 1, max: 100.0, step: 1.0 },
+      uCovFloor: { type: "number", uniform: "uCovFloor", min: 0, max: 10.0, step: 0.01 },
+      uBodyThresh: { type: "number", uniform: "uBodyThresh", min: 0, max: 10.0, step: 0.1 },
+      uBodyEdge: { type: "number", uniform: "uBodyEdge", min: 0, max: 100.0, step: 0.1 },
+      uBodyGamma: { type: "number", uniform: "uBodyGamma", min: 0, max: 100.0, step: 1.0 },
+      uUseNoise: { type: "number", uniform: "uUseNoise", min: 0, max: 1.0, step: 1.0 },
     }, mat))
 
 
