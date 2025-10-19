@@ -97,3 +97,13 @@ future ideas:
 - sync up wind particles + trail height code
 - add lighting shaders to new globe
 - opacity for clouds based on rain content etc
+- remove second three globe
+- make controls move smoothly at poles
+- looking up at clouds from ground and pressing w makes you go backwards?
+- going forwards makes you drift towards poles?
+- dont let users go below the globe
+- clouds
+  - make the code simpler more performant
+  - tune the view a little bit
+  - implemenet it for different pressure levels
+  - see if you can see from the inside of cloud a little better

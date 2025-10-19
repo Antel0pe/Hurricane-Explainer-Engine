@@ -21,6 +21,7 @@
     "next": "15.5.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "stats.js": "^0.17.0",
     "three": "^0.179.1",
     "three-globe": "^2.44.0",
     "tweakpane": "^4.0.3"
@@ -31,6 +32,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/stats.js": "^0.17.4",
     "eslint": "^9",
     "eslint-config-next": "15.5.0",
     "tailwindcss": "^4",

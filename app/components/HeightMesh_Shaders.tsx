@@ -15,7 +15,7 @@ import { useFeatureFlag } from "./tweaks/FeatureBusHook";
 import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_shared_glsl, getWindMotionRangesPerPressureLevel } from "./ShadersLib";
 import TemperatureShellLayer from "./TemperatureShellLayer";
 import TerrainSphereLayer from "./ElevationLayer";
-
+import Stats from 'stats.js';
 
 
 
@@ -601,6 +601,19 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const windLayersSetRef = useRef<Set<WindLayerAPI>>(new Set());
   const [engineReady, setEngineReady] = useState(false);
   const [wind250Tex, setWind250Tex] = useState<THREE.Texture | null>(null);
+  const statsRef = useRef<Stats | null>(null);
+
+const render = useCallback(() => {
+  const renderer = rendererRef.current;
+  const scene = sceneRef.current;
+  const camera = cameraRef.current;
+  const stats = statsRef.current;
+  if (!renderer || !scene || !camera) return;
+
+  stats?.begin();
+  renderer.render(scene, camera);
+  stats?.end();
+}, []);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -633,6 +646,16 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
+    // Create the FPS counter
+    const stats = new Stats();
+    stats.showPanel(0); // 0: fps, 1: ms, 2: memory
+    stats.dom.style.position = 'absolute';
+    stats.dom.style.top = '8px';
+    stats.dom.style.left = '8px';
+    stats.dom.style.pointerEvents = 'none'; // don’t block mouse
+    host.appendChild(stats.dom);
+    statsRef.current = stats;
+
     // let three globe load in
     camera.position.set(0, -300, 150);  // any non-zero radius > 100 works
     controls.target.set(0, 0, 0);
@@ -651,8 +674,6 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     // --- render-on-demand (guarded; no recursive re-entry) ---
     let rafId: number | null = null;
     let animating = false;
-
-    const render = () => renderer.render(scene, camera);
 
     const startDampedRAF = () => {
       if (stopped || animating) return; // start only once
@@ -958,6 +979,13 @@ camera.up.copy(U_cam);
       ro.disconnect();
       controls.dispose();
 
+      if (statsRef.current) {
+  const el = statsRef.current.dom;
+  if (el.parentElement) el.parentElement.removeChild(el);
+  statsRef.current = null;
+}
+
+
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
 
@@ -1190,7 +1218,8 @@ camera.up.copy(U_cam);
       renderer.setScissorTest(prevScissorTest);
 
       controls.update();
-      renderer.render(scene, camera);
+      // renderer.render(scene, camera);
+      render();
 
       requestAnimationFrame(loop);
     };
