@@ -545,6 +545,8 @@ uniform float uTwistDegMax;    // max rotation of density basis around radial ax
 
 uniform float uCloudBrightness;
 uniform float cloudExtinctionMode;
+uniform float debugMode;
+uniform float uMinDT;
 
 in vec3 vWorld;   
 out vec4 fragColor;        
@@ -944,8 +946,14 @@ if (cloudExtinctionMode == 1.0){
   float rho  = densityWorldTwisted_ctx(c) * era5Gate3DColumn_ctx(c);
   return rho * uSigmaT;
 } else {
-    float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
-  return rho * uSigmaT;
+   if (debugMode == 2.0){
+        float rho =  era5Gate3DColumn(p);  // ← new gate
+    return rho * uSigmaT;
+    } else {
+          float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
+    return rho * uSigmaT;
+      }
+    
   }
 }
 
@@ -962,7 +970,7 @@ vec4 marchClouds(vec3 ro, vec3 rd){
 
   float segLen   = t1 - t0;
   int   steps    = max(1, uNumSteps);
-  float dt       = segLen / float(steps);
+  float dt       = min(uMinDT, segLen / float(steps));
 
   // world-locked jitter on the start to hide banding
   // build a stable cell from the first sample point
@@ -992,7 +1000,28 @@ vec4 marchClouds(vec3 ro, vec3 rd){
   }
 
   vec3 col = vec3(accA * uCloudBrightness); 
+  if (debugMode == 1.0){
   return vec4(col, accA);
+  } else {
+      vec3 pmid = ro + (t0 + 0.5*(t1 - t0)) * rd;
+vec2 uv  = worldToUV(pmid);
+float tilesX = 1440.0;
+float tilesY = 721.0;
+vec2 st = uv * vec2(tilesX, tilesY);
+float tx = step(0.98, fract(st.x));
+float ty = step(0.98, fract(st.y));
+float gridTile = max(tx, ty);
+
+float cov = texture(uCov, uv).r;
+vec3 base = vec3(cov);
+vec3 over = mix(base, vec3(0.2,0.7,1.0), gridTile); // cyan lines
+return vec4(over, 1.0);
+
+
+    }
+
+
+
 }
 
 void main(){
@@ -1040,7 +1069,7 @@ export default function CloudCoverLayer({
   opacity = 0.85,
   feather = 0.02,
   eraSize = { w: 1440, h: 721 },
-  tilePx = 32,
+  tilePx = 1,
   iterations = 10,
   gphTex,
   windTex,
@@ -1196,7 +1225,9 @@ const drawH = Math.round(size.y * dpr);
       uNoiseWalkKm: { value: 60.0 },
       uTwistDegMax: { value: 90.0 },
       uCloudBrightness: { value: 0.9 },
-      cloudExtinctionMode: { value: 0 }
+      cloudExtinctionMode: { value: 0 },
+      debugMode: { value: 2 }, 
+      uMinDT: { value: 15 }
     }
   });
   mat.toneMapped = false;
@@ -1205,6 +1236,8 @@ const drawH = Math.round(size.y * dpr);
   PaneHub.bind(
     `3d cloud cover`,
     {
+                  uMinDT: { type: "number", uniform: "uMinDT", min: 0, max: 10, step: 0.01 },
+            debugMode: { type: "number", uniform: "debugMode", min: 0, max: 5, step: 1 },
       cloudExtinctionMode: { type: "number", uniform: "cloudExtinctionMode", min: 0, max: 1, step: 1 },
 uWorldToKm: { type: "number", uniform: "uWorldToKm", min: 0, max: 100, step: 0.01 },
 uVertSquash: { type: "number", uniform: "uVertSquash", min: 0, max: 200, step: 0.01 },
@@ -1216,7 +1249,7 @@ uNoiseL2Km: { type: "number", uniform: "uNoiseL2Km", min: 0, max: 50, step: 0.01
 uNoiseAmp2: { type: "number", uniform: "uNoiseAmp2", min: 0, max: 200, step: 0.01 },
 uClumpLKm: { type: "number", uniform: "uClumpLKm", min: 0, max: 20, step: 0.1 },
 uClumpAmp: { type: "number", uniform: "uClumpAmp", min: 0, max: 2, step: 0.01 },
-uDensityGain: { type: "number", uniform: "uDensityGain", min: 0, max: 5, step: 0.01 },
+uDensityGain: { type: "number", uniform: "uDensityGain", min: 0, max: 50, step: 0.01 },
 uSeed: { type: "number", uniform: "uSeed", min: 0, max: 100, step: 1.0 },
 uFeatherJitterAmp: { type: "number", uniform: "uFeatherJitterAmp", min: 0, max: 0.1, step: 0.001 },
 uJitterCellKm: { type: "number", uniform: "uJitterCellKm", min: 0, max: 20, step: 0.1 },
