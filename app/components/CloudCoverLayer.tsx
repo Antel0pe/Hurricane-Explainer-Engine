@@ -299,36 +299,36 @@ this.copyPressureLevelChannelToRed.dispose();
     // 3) Iterate K times
     this.maskMat.uniforms.uLook.value = lookTex;
 
-    for (let k = 0; k < iterations; k++) {
-      // Mask at full res
-      this.maskMat.uniforms.uTau.value = this.tauRT.texture;
-      this.draw(this.maskMat, this.maskRT);
+//     for (let k = 0; k < iterations; k++) {
+//       // Mask at full res
+//       this.maskMat.uniforms.uTau.value = this.tauRT.texture;
+//       this.draw(this.maskMat, this.maskRT);
 
-      // mipmaps for mask & coverage
-      this.maskRT.texture.generateMipmaps = true;
+//       // mipmaps for mask & coverage
+//       this.maskRT.texture.generateMipmaps = true;
 
-      // Tile update (render to tile RT size)
-      this.updateMat.uniforms.uTau.value   = this.tauRT.texture;
-      this.updateMat.uniforms.uTauLo.value = this.tauLoRT.texture;
-      this.updateMat.uniforms.uTauHi.value = this.tauHiRT.texture;
-      this.updateMat.uniforms.uMask.value  = this.maskRT.texture;
-      this.updateMat.uniforms.uCov.value   = this.singleRedChannelForPressureLevelTarget.texture;
+//       // Tile update (render to tile RT size)
+//       this.updateMat.uniforms.uTau.value   = this.tauRT.texture;
+//       this.updateMat.uniforms.uTauLo.value = this.tauLoRT.texture;
+//       this.updateMat.uniforms.uTauHi.value = this.tauHiRT.texture;
+//       this.updateMat.uniforms.uMask.value  = this.maskRT.texture;
+//       this.updateMat.uniforms.uCov.value   = this.singleRedChannelForPressureLevelTarget.texture;
 
-      this.draw(this.updateMat, this.tauTileRT, { w: this.tauTileRT.width, h: this.tauTileRT.height });
+//       this.draw(this.updateMat, this.tauTileRT, { w: this.tauTileRT.width, h: this.tauTileRT.height });
 
-      // Upsample τ/lo/hi back to full res (nearest/bilinear)
-      this.upsampleMat.uniforms.uSrc.value = this.tauTileRT.texture;
-      this.draw(this.upsampleMat, this.tauRT);
-      this.draw(this.upsampleMat, this.tauLoRT);
-      this.draw(this.upsampleMat, this.tauHiRT);
-    }
-    // --- τ blur for Option E ---
-this.blurHMat.uniforms.uSrc.value = this.tauRT.texture;
-this.draw(this.blurHMat, this.tauBlurH);
+//       // Upsample τ/lo/hi back to full res (nearest/bilinear)
+//       this.upsampleMat.uniforms.uSrc.value = this.tauTileRT.texture;
+//       this.draw(this.upsampleMat, this.tauRT);
+//       this.draw(this.upsampleMat, this.tauLoRT);
+//       this.draw(this.upsampleMat, this.tauHiRT);
+//     }
+//     // --- τ blur for Option E ---
+// this.blurHMat.uniforms.uSrc.value = this.tauRT.texture;
+// this.draw(this.blurHMat, this.tauBlurH);
 
-this.blurVMat.uniforms.uSrc.value = this.tauBlurH.texture;
-this.draw(this.blurVMat, this.tauBlurV);
-this.tauBlurV.texture.generateMipmaps = true;
+// this.blurVMat.uniforms.uSrc.value = this.tauBlurH.texture;
+// this.draw(this.blurVMat, this.tauBlurV);
+// this.tauBlurV.texture.generateMipmaps = true;
 
 return { singleChannelRawEra5: this.singleRedChannelForPressureLevelTarget.texture, tau: this.tauRT.texture, tauBlur: this.tauBlurV.texture };
 
@@ -548,6 +548,13 @@ uniform float cloudExtinctionMode;
 uniform float debugMode;
 uniform float uMinDT;
 
+// === DEBUG + SEED CONTROL ===
+uniform int  uDebugStage;   // 0=full march, 1=cov (nearest), 2=cov (manual bilinear),
+                            // 3=cov (3x3 box), 4=carrier L, 5=gate-only (mask q),
+                            // 6=density-only, 7=seed map
+uniform int  uSeedMode;     // 0=cell-seeded (current), 1=continuous UV-seeded
+
+
 in vec3 vWorld;   
 out vec4 fragColor;        
 
@@ -679,6 +686,50 @@ vec2 worldToUV(vec3 p){
   return vec2(u, v);
 }
 
+// ----- coverage sampling helpers -----
+float covNearest(vec2 uv){ return texture(uCov, uv).r; }
+
+float covBilinear(vec2 uv){
+  ivec2 sz = textureSize(uCov, 0);
+  vec2 texel = 1.0 / vec2(sz);
+
+  // sample center-relative to do our own bilinear (independent of texture filters)
+  vec2 uv_px  = uv * vec2(sz) - 0.5;
+  vec2 f      = fract(uv_px);
+  ivec2 i0    = ivec2(floor(uv_px));
+  vec2 uv00   = (vec2(i0) + 0.5) / vec2(sz);
+
+  float c00 = texture(uCov, uv00).r;
+  float c10 = texture(uCov, uv00 + vec2(texel.x, 0.0)).r;
+  float c01 = texture(uCov, uv00 + vec2(0.0, texel.y)).r;
+  float c11 = texture(uCov, uv00 + texel).r;
+
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+float covBox3(vec2 uv){
+  vec2 texel = 1.0 / vec2(textureSize(uCov, 0));
+  float s = 0.0;
+  for (int dy = -1; dy <= 1; ++dy)
+  for (int dx = -1; dx <= 1; ++dx){
+    s += texture(uCov, uv + vec2(dx,dy)*texel).r;
+  }
+  return s / 9.0;
+}
+// Continuous vs cell-anchored seed (the latter creates grid-aligned jumps)
+float columnSeed_custom(vec2 uv){
+  if (uSeedMode == 0){
+    // --- original, discontinuous at every ERA5 cell boundary ---
+    vec2 cell = floor(uv * vec2(360.0, 180.0) / max(uCovCellDeg, 1e-6));
+    return hash12(cell);
+  } else {
+    // --- continuous in UV: no jumps across cell borders ---
+    // (hash on fractional uv grid; large freq so columns vary but continuously)
+    return hash12(fract(uv * vec2(4096.0, 4096.0)));
+  }
+}
+
+
 // stable per-column seed from ERA5 cell id:
 float columnSeed(vec2 uv){
   vec2 cell = floor(uv * vec2(360.0, 180.0) / max(uCovCellDeg, 1e-6));
@@ -698,7 +749,7 @@ float densityWorldTwisted(vec3 worldPos){
 
   // per-column stable seed
   vec2 uv    = worldToUV(worldPos);
-  float seed = columnSeed(uv);
+  float seed = columnSeed_custom(uv);
 
   // random walk in km across height (same idea you used for gate but for density coords)
   float f1 = fbm1D(t * uWalkFreq + seed*1.7, uWalkOctaves);
@@ -857,7 +908,7 @@ CloudCtx makeCloudCtx(vec3 p){
 
   // per-column seed (ERA5 cell id)
   vec2 cell = floor(c.uv * vec2(360.0, 180.0) / max(uCovCellDeg, 1e-6));
-  c.seed = hash12(cell);
+  c.seed = columnSeed_custom(c.uv);
 
   // --- height-dependent random walk for BOTH gate + density (no trig) ---
   float fx = fbm1D(c.t * uWalkFreq        + c.seed*3.1, uWalkOctaves); // [0,1]
@@ -916,15 +967,15 @@ float era5Gate3DColumn_ctx(in CloudCtx c){
 
   // OPTIONAL anvil spread (comment out to save 4 tex reads)
   float cov = cov0;
-  float bleed = smoothstep(0.45, 1.0, c.t);
-  float dA    = radians(uTopSpreadDeg) * bleed;
-  vec2  dU    = dLatLon_to_dUV(0.0, dA, uFlipV);
-  vec2  dV    = dLatLon_to_dUV(dA, 0.0, uFlipV);
-  float c1 = texture(uCov, fract(c.uvWalk + dU )).r;
-  float c2 = texture(uCov, fract(c.uvWalk - dU )).r;
-  float c3 = texture(uCov, fract(c.uvWalk + dV )).r;
-  float c4 = texture(uCov, fract(c.uvWalk - dV )).r;
-  cov = mix(cov0, max(max(c1,c2), max(c3,c4)), bleed * 0.5);
+  // float bleed = smoothstep(0.45, 1.0, c.t);
+  // float dA    = radians(uTopSpreadDeg) * bleed;
+  // vec2  dU    = dLatLon_to_dUV(0.0, dA, uFlipV);
+  // vec2  dV    = dLatLon_to_dUV(dA, 0.0, uFlipV);
+  // float c1 = texture(uCov, fract(c.uvWalk + dU )).r;
+  // float c2 = texture(uCov, fract(c.uvWalk - dU )).r;
+  // float c3 = texture(uCov, fract(c.uvWalk + dV )).r;
+  // float c4 = texture(uCov, fract(c.uvWalk - dV )).r;
+  // cov = mix(cov0, max(max(c1,c2), max(c3,c4)), bleed * 0.5);
 
   // correlated carrier
   float L = texture(uLook, c.uvWalk).r;
@@ -946,13 +997,8 @@ if (cloudExtinctionMode == 1.0){
   float rho  = densityWorldTwisted_ctx(c) * era5Gate3DColumn_ctx(c);
   return rho * uSigmaT;
 } else {
-   if (debugMode == 2.0){
-        float rho =  era5Gate3DColumn(p);  // ← new gate
-    return rho * uSigmaT;
-    } else {
           float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
     return rho * uSigmaT;
-      }
     
   }
 }
@@ -972,11 +1018,16 @@ vec4 marchClouds(vec3 ro, vec3 rd){
   int   steps    = max(1, uNumSteps);
   float dt       = min(uMinDT, segLen / float(steps));
 
+
   // world-locked jitter on the start to hide banding
   // build a stable cell from the first sample point
   vec3 p0  = ro + t0 * rd;
   float cellScale = (uWorldToKm > 0.0) ? (uJitterCellKm / uWorldToKm) : 1.0;
   float j = hash13(floor(p0 / max(1e-6, cellScale))) * 2.0 - 1.0;
+
+//     float cosInc = abs(dot(rd, normalize(p0))); // crude incidence proxy
+// float adapt  = mix(0.5, 1.0, cosInc);       // smaller at grazing
+// float dt = min(uMinDT * adapt, segLen / float(steps));
 
   float t  = t0 + (0.5 + 0.5 * uJitterAmp * j) * dt;
 
@@ -1003,20 +1054,10 @@ vec4 marchClouds(vec3 ro, vec3 rd){
   if (debugMode == 1.0){
   return vec4(col, accA);
   } else {
-      vec3 pmid = ro + (t0 + 0.5*(t1 - t0)) * rd;
-vec2 uv  = worldToUV(pmid);
-float tilesX = 1440.0;
-float tilesY = 721.0;
-vec2 st = uv * vec2(tilesX, tilesY);
-float tx = step(0.98, fract(st.x));
-float ty = step(0.98, fract(st.y));
-float gridTile = max(tx, ty);
-
-float cov = texture(uCov, uv).r;
-vec3 base = vec3(cov);
-vec3 over = mix(base, vec3(0.2,0.7,1.0), gridTile); // cyan lines
-return vec4(over, 1.0);
-
+  vec3 pmid = ro + (t0 + 0.5*(t1 - t0)) * rd;
+  vec2 uv   = worldToUV(pmid);
+  float cov = texture(uCov, uv).r;
+  return vec4(vec3(cov), 1.0);
 
     }
 
@@ -1203,8 +1244,8 @@ const drawH = Math.round(size.y * dpr);
       uClumpAmp: { value: 0.0 },
       uDensityGain: { value: 1.0 },
       uSeed: { value: 4 },
-      uFeatherJitterAmp: { value: 0.01 },
-      uJitterCellKm: { value: 8.0 },
+      uFeatherJitterAmp: { value: 0.0 },
+      uJitterCellKm: { value: 0.0 },
       uLook:     { value: lookTexRef.current },
       uCov:      { value: singleChannelRawEra5 },
       uEps:      { value: feather },
@@ -1213,10 +1254,10 @@ const drawH = Math.round(size.y * dpr);
       uK:        { value: 0.7 },
       uNumSteps: { value: 4 },
       uSigmaT: { value: 2.0 },
-      uJitterAmp: { value: 0.3 },
+      uJitterAmp: { value: 0.0 },
       uCloudColor: { value: new THREE.Vector3(0.97, 0.96, 0.94) },
       uCovCellDeg: { value: 0.25 },
-      uWalkAmpDeg: { value: 0.35 },
+      uWalkAmpDeg: { value: 0 },
       uWalkFreq: { value: 5.0 },
       uWalkOctaves: { value: 3.0 },
       uGateNoiseLKm: { value: 120.0 },
@@ -1226,8 +1267,10 @@ const drawH = Math.round(size.y * dpr);
       uTwistDegMax: { value: 90.0 },
       uCloudBrightness: { value: 0.9 },
       cloudExtinctionMode: { value: 0 },
-      debugMode: { value: 2 }, 
-      uMinDT: { value: 15 }
+      debugMode: { value: 1 }, 
+      uMinDT: { value: 15 },
+      uDebugStage: { value: 0 },
+      uSeedMode: { value: 0 }
     }
   });
   mat.toneMapped = false;
@@ -1236,6 +1279,8 @@ const drawH = Math.round(size.y * dpr);
   PaneHub.bind(
     `3d cloud cover`,
     {
+      uDebugStage: { type: "number", uniform: "uDebugStage", min: 0, max: 7, step: 1 },
+      uSeedMode: { type: "number", uniform: "uSeedMode", min: 0, max: 1, step: 1 },
                   uMinDT: { type: "number", uniform: "uMinDT", min: 0, max: 10, step: 0.01 },
             debugMode: { type: "number", uniform: "debugMode", min: 0, max: 5, step: 1 },
       cloudExtinctionMode: { type: "number", uniform: "cloudExtinctionMode", min: 0, max: 1, step: 1 },
