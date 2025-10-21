@@ -24,6 +24,13 @@ function zOffsetForPressure(p: number): number {
   return 0.5;
 }
 
+function proxySphereRadiusFromPressure(p: number): number[] {
+  if (p === 850) return [10,15];
+  if (p === 500) return [15,20];
+  if (p === 250) return [20,25];
+  return [-1,-1];
+}
+
 
 // -------------------------- Small in-file pipeline manager --------------------------
 class CloudPipelineManager {
@@ -554,6 +561,13 @@ uniform int  uDebugStage;   // 0=full march, 1=cov (nearest), 2=cov (manual bili
                             // 6=density-only, 7=seed map
 uniform int  uSeedMode;     // 0=cell-seeded (current), 1=continuous UV-seeded
 
+// --- Adaptive marching controls ---
+uniform float uMaxTStep;          // target max change in shell-height per sample, e.g. 0.02
+uniform int   uMinStepsAdaptive;  // floor, e.g. 8
+uniform int   uMaxStepsAdaptive;  // cap, e.g. 96
+uniform float uMaxStepKm;         // optional physical cap (km per sample), e.g. 2.0 (use <=0 to disable)
+
+
 
 in vec3 vWorld;   
 out vec4 fragColor;        
@@ -840,8 +854,70 @@ float era5Gate3DColumn(vec3 worldPos){
   float mask = smoothstep(q - eps, q + eps, L);
 
   // final soft gate (floor + masked)
+  // return  covBox3(uvWalk + dU);
   return mix(cov, mask * cov, clamp(uK, 0.0, 1.0));
 }
+
+// --- place near top of the file (helpers) ---
+// March-aligned ERA5 prefilter: average cov along the segment [t - 0.5*dt, t + 0.5*dt]
+float covLinePrefilter(vec3 ro, vec3 rd, float t, float dt, bool useWalk){
+  // segment endpoints in world, their UVs
+  vec3 pA = ro + (t - 0.5*dt) * rd;
+  vec3 pB = ro + (t + 0.5*dt) * rd;
+
+  vec2 uvA = worldToUV(pA);
+  vec2 uvB = worldToUV(pB);
+
+  // OPTIONAL: reuse your height walk (keeps look consistent) — cheap version
+  if (useWalk){
+    float ta = shellT01(pA, uRBase, uRTop);
+    float tb = shellT01(pB, uRBase, uRTop);
+    // very small walk from your existing formula; we don't need exact copy
+    float ampA = radians(uWalkAmpDeg) * ta;
+    float ampB = radians(uWalkAmpDeg) * tb;
+    uvA += dLatLon_to_dUV( ampA*0.2, ampA*0.2, uFlipV );
+    uvB += dLatLon_to_dUV( ampB*0.2, ampB*0.2, uFlipV );
+    uvA = fract(uvA); uvB = fract(uvB);
+  }
+
+  // how many texels long is this footprint? choose taps accordingly
+  vec2 texel = 1.0 / vec2(textureSize(uCov, 0));
+  float lenTex = length((uvB - uvA) / texel);
+  int N = int(clamp(floor(lenTex) + 1.0, 3.0, 9.0)); // 3..9 taps
+
+  float wsum = 0.0, acc = 0.0;
+  for (int i=0; i<16; ++i){
+    if (i >= N) break;
+    float a = (float(i) + 0.5) / float(N);     // 0..1 along the segment
+    vec2  uv = fract(mix(uvA, uvB, a));
+    float w  = 1.0;                            // box weights are fine here
+    acc  += w * texture(uCov, uv).r;
+    wsum += w;
+  }
+  return acc / max(wsum, 1e-6);
+}
+
+// --- replace your whole era5Gate3DColumn with this simplified version ---
+float era5Gate3DColumn_simplified(vec3 ro, vec3 rd, float t, float dt){
+  // 1) coverage along the *segment* this step sees
+  float cov = covLinePrefilter(ro, rd, t, dt, true);  // true = tiny walked variant
+
+  // 2) small 3D threshold modulation (keeps vertical variation but mild)
+  vec3  p    = ro + t*rd;
+  float n3   = normNoise((p * uWorldToKm) / max(1e-6, uGateNoiseLKm));   // [-1,1]
+  float L    = texture(uLook, worldToUV(p)).r;
+
+  float qBase = 1.0 - cov;
+  float q     = clamp(qBase + n3 * (uGateNoiseAmp * 0.6), 0.0, 1.0);     // toned down
+
+  // 3) feather without per-cell jitter (we removed that cause of seams already)
+  float eps  = uEps;                           // keep your UI control
+  float mask = smoothstep(q - eps, q + eps, L);
+
+  // 4) final soft gate
+  return mix(cov, mask * cov, clamp(uK, 0.0, 1.0));
+}
+
 
 
 bool intersectSphere(vec3 ro, vec3 rd, float R, out float tEnter, out float tExit){
@@ -997,7 +1073,7 @@ if (cloudExtinctionMode == 1.0){
   float rho  = densityWorldTwisted_ctx(c) * era5Gate3DColumn_ctx(c);
   return rho * uSigmaT;
 } else {
-          float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
+    float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
     return rho * uSigmaT;
     
   }
@@ -1008,15 +1084,56 @@ if (cloudExtinctionMode == 1.0){
 //   return rho * uSigmaT;
 // }
 
+// Adaptive steps based on vertical (radial) resolution and an optional km spacing cap
+int adaptiveStepCount(vec3 ro, vec3 rd, float t0, float t1){
+  float segLen = max(1e-6, t1 - t0);
+
+  // Approximate incidence using radial axis at the segment's midpoint
+  vec3 pmid   = ro + (t0 + 0.5 * segLen) * rd;
+  vec3 axis   = normalize(pmid);
+  float cosInc = abs(dot(rd, axis));          // how fast radius changes along the ray
+
+  // Total span in normalized shell height (0..1) the ray traverses in this segment
+  float shellH = max(1e-6, (uRTop - uRBase));
+  float tSpan  = (segLen * cosInc) / shellH;  // ≈ Δ((r-Rbase)/(Rtop-Rbase))
+
+  // Steps to keep per-sample Δt ≤ uMaxTStep
+  float stepsT = (uMaxTStep > 0.0) ? ceil(tSpan / uMaxTStep) : 0.0;
+
+  // Optional: cap world spacing in km
+  float stepsKm = 0.0;
+  if (uMaxStepKm > 0.0 && uWorldToKm > 0.0){
+    float segKm = segLen * uWorldToKm;
+    stepsKm = ceil(segKm / uMaxStepKm);
+  }
+
+  float need = max(stepsT, stepsKm);
+
+  // Fallback to at least 1 if both disabled
+  if (need < 1.0) need = 1.0;
+
+  // Clamp to user ranges
+  int steps = int(clamp(need, float(uMinStepsAdaptive), float(uMaxStepsAdaptive)));
+  return max(1, steps);
+}
+
+
 vec4 marchClouds(vec3 ro, vec3 rd){
   float t0, t1;
   if (!shellSegment(ro, rd, uRBase, uRTop, t0, t1)) {
     return vec4(0.0); // miss: fully transparent
   }
 
-  float segLen   = t1 - t0;
-  int   steps    = max(1, uNumSteps);
-  float dt       = min(uMinDT, segLen / float(steps));
+  // float segLen   = t1 - t0;
+  // int   steps    = max(1, uNumSteps);
+  // float dt       = min(uMinDT, segLen / float(steps));
+    float segLen   = t1 - t0;
+  int   steps    = adaptiveStepCount(ro, rd, t0, t1);
+
+  // Choose dt from adaptive steps, while honoring your existing dt ceiling uMinDT
+  float dtCandidate = segLen / float(steps);
+  float dt          = (uMinDT > 0.0) ? min(uMinDT, dtCandidate) : dtCandidate;
+
 
 
   // world-locked jitter on the start to hide banding
@@ -1025,17 +1142,31 @@ vec4 marchClouds(vec3 ro, vec3 rd){
   float cellScale = (uWorldToKm > 0.0) ? (uJitterCellKm / uWorldToKm) : 1.0;
   float j = hash13(floor(p0 / max(1e-6, cellScale))) * 2.0 - 1.0;
 
-//     float cosInc = abs(dot(rd, normalize(p0))); // crude incidence proxy
-// float adapt  = mix(0.5, 1.0, cosInc);       // smaller at grazing
-// float dt = min(uMinDT * adapt, segLen / float(steps));
-
   float t  = t0 + (0.5 + 0.5 * uJitterAmp * j) * dt;
-
   float accA   = 0.0;
 
   for (int i = 0; i < 128; ++i) { // compile-time cap
     if (i >= steps) break;
     vec3 p = ro + t * rd;
+
+//     // --- place inside march loop (for diagnosis only) ---
+// float rho0 = densityWorldTwisted(p);
+// float rho1 = densityWorldTwisted(ro + (t + dt) * rd);
+// float g0   = era5Gate3DColumn(p);
+// float g1   = era5Gate3DColumn(ro + (t + dt) * rd);
+
+// // central diffs (magnitude only)
+// float dRho = abs(rho1 - rho0);
+// float dG   = abs(g1   - g0);
+
+// // color-code the “fastest” contributor this step:
+// // red = gate dominates, green = density dominates, black = calm
+// vec3 viz = vec3(0.0);
+// if (dG > dRho) viz.r = smoothstep(0.02, 0.15, dG);     // tune thresholds
+// else            viz.g = smoothstep(0.02, 0.15, dRho);
+
+// return vec4(viz, 1.0);
+
 
     float sigma = cloudExtinction(p);         // extinction at sample
     float aStep = 1.0 - exp(-sigma * dt);     // alpha this step (Beer–Lambert)
@@ -1201,8 +1332,9 @@ if (volGroupRef.current) {
 }
 
 // decide initial radii (editable later)
-rBaseRef.current = globeRadius + 10.0;
-rTopRef.current  = globeRadius + 15.0;
+const globeRadiusBounds = proxySphereRadiusFromPressure(pressureLevel);
+rBaseRef.current = globeRadius + globeRadiusBounds[0];
+rTopRef.current  = globeRadius + globeRadiusBounds[1];
 
 // make a group: [proxyMesh (translucent)] + [ringBase, ringTop] for verification
 const g = new THREE.Group();
@@ -1233,14 +1365,14 @@ const drawH = Math.round(size.y * dpr);
       uRBase:   { value: rBaseRef.current },
       uRTop:    { value: rTopRef.current },
       uWorldToKm: { value: 6371/173 },
-      uVertSquash: { value: 10.0 },
-      uNoiseL0Km: { value: 3.0 },
-      uNoiseAmp0: { value: 0.5 },
-      uNoiseL1Km: { value: 0.4 },
-      uNoiseAmp1: { value: 0.1 },
-      uNoiseL2Km: { value: 0.15 },
-      uNoiseAmp2: { value: 0.2 },
-      uClumpLKm: { value: 8.0 },
+      uVertSquash: { value: 0.0 },
+      uNoiseL0Km: { value: 0.0 },
+      uNoiseAmp0: { value: 0 },
+      uNoiseL1Km: { value: 0 },
+      uNoiseAmp1: { value: 0 },
+      uNoiseL2Km: { value: 0 },
+      uNoiseAmp2: { value: 0 },
+      uClumpLKm: { value: 0 },
       uClumpAmp: { value: 0.0 },
       uDensityGain: { value: 1.0 },
       uSeed: { value: 4 },
@@ -1248,29 +1380,33 @@ const drawH = Math.round(size.y * dpr);
       uJitterCellKm: { value: 0.0 },
       uLook:     { value: lookTexRef.current },
       uCov:      { value: singleChannelRawEra5 },
-      uEps:      { value: feather },
+      uEps:      { value: 0.6 },
       uLonOffset:{ value: 0.25 },
       uFlipV:    { value: true },
-      uK:        { value: 0.7 },
+      uK:        { value: 0.4 },
       uNumSteps: { value: 4 },
       uSigmaT: { value: 2.0 },
-      uJitterAmp: { value: 0.0 },
+      uJitterAmp: { value: 1.0 },
       uCloudColor: { value: new THREE.Vector3(0.97, 0.96, 0.94) },
-      uCovCellDeg: { value: 0.25 },
-      uWalkAmpDeg: { value: 0 },
-      uWalkFreq: { value: 5.0 },
-      uWalkOctaves: { value: 3.0 },
-      uGateNoiseLKm: { value: 120.0 },
-      uGateNoiseAmp: { value: 0.12 },
-      uTopSpreadDeg: { value: 0.12 },
-      uNoiseWalkKm: { value: 60.0 },
-      uTwistDegMax: { value: 90.0 },
+      uCovCellDeg: { value: 0 },
+      uWalkAmpDeg: { value: 1.0 },
+      uWalkFreq: { value: 10.0 },
+      uWalkOctaves: { value: 1.0 },
+      uGateNoiseLKm: { value: 0.0 },
+      uGateNoiseAmp: { value: 0.0 },
+      uTopSpreadDeg: { value: 0 },
+      uNoiseWalkKm: { value: 0.0 },
+      uTwistDegMax: { value: 0.0 },
       uCloudBrightness: { value: 0.9 },
-      cloudExtinctionMode: { value: 0 },
+      cloudExtinctionMode: { value: 1 },
       debugMode: { value: 1 }, 
       uMinDT: { value: 15 },
       uDebugStage: { value: 0 },
-      uSeedMode: { value: 0 }
+      uSeedMode: { value: 0 },
+      uMaxTStep: { value: 1.3 },
+      uMinStepsAdaptive: { value: 4 },
+      uMaxStepsAdaptive: { value: 12 },
+      uMaxStepKm: { value: 3 }
     }
   });
   mat.toneMapped = false;
@@ -1278,7 +1414,11 @@ const drawH = Math.round(size.y * dpr);
   paneHubDisposeCleanup.push(
   PaneHub.bind(
     `3d cloud cover`,
-    {
+    {    
+      uMaxTStep: { type: "number", uniform: "uMaxTStep", min: 0, max: 10, step: 0.01 },
+      uMinStepsAdaptive: { type: "number", uniform: "uMinStepsAdaptive", min: 0, max: 100, step: 1 },
+      uMaxStepsAdaptive: { type: "number", uniform: "uMaxStepsAdaptive", min: 0, max: 250, step: 1 },
+      uMaxStepKm: { type: "number", uniform: "uMaxStepKm", min: 0, max: 100, step: 1 },
       uDebugStage: { type: "number", uniform: "uDebugStage", min: 0, max: 7, step: 1 },
       uSeedMode: { type: "number", uniform: "uSeedMode", min: 0, max: 1, step: 1 },
                   uMinDT: { type: "number", uniform: "uMinDT", min: 0, max: 10, step: 0.01 },
