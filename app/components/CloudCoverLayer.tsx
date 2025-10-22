@@ -10,7 +10,7 @@ import { getGlobeRadius } from "../utils/globeInfo";
 // Swap this to your endpoint (PNG of the global fBm look field, R in [0..1])
 const FBM_NOISE_API = "/api/cloud_cover/noise";
 
-function colorChannelFromPressure(p: number): 0|1|2 {
+function colorChannelFromPressure(p: number): 0 | 1 | 2 {
   if (p === 850) return 0; // R
   if (p === 500) return 1; // G
   if (p === 250) return 2; // B
@@ -25,10 +25,10 @@ function zOffsetForPressure(p: number): number {
 }
 
 function proxySphereRadiusFromPressure(p: number): number[] {
-  if (p === 850) return [10,15];
-  if (p === 500) return [15,20];
-  if (p === 250) return [20,25];
-  return [-1,-1];
+  if (p === 850) return [10, 15];
+  if (p === 500) return [15, 20];
+  if (p === 250) return [20, 25];
+  return [-1, -1];
 }
 
 
@@ -52,22 +52,22 @@ class CloudPipelineManager {
   private tauHiRT!: THREE.WebGLRenderTarget;  // full-res hi
   private tauTileRT!: THREE.WebGLRenderTarget;// tile-res packed (tau,lo,hi,_)
   private tauBlurH!: THREE.WebGLRenderTarget;
-private tauBlurV!: THREE.WebGLRenderTarget;
-private singleRedChannelForPressureLevelTarget!: THREE.WebGLRenderTarget; // single-channel (R) selected from RGB
-private copyPressureLevelChannelToRed!: THREE.ShaderMaterial;   // copies chosen channel -> R
+  private tauBlurV!: THREE.WebGLRenderTarget;
+  private singleRedChannelForPressureLevelTarget!: THREE.WebGLRenderTarget; // single-channel (R) selected from RGB
+  private copyPressureLevelChannelToRed!: THREE.ShaderMaterial;   // copies chosen channel -> R
 
 
 
   // Fullscreen quad scene
   private quad!: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private scene = new THREE.Scene();
-  private cam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
   // Materials
   private blurHMat!: THREE.ShaderMaterial;
   private blurVMat!: THREE.ShaderMaterial;
-  private maskMat!:  THREE.ShaderMaterial;
-  private updateMat!:THREE.ShaderMaterial;
+  private maskMat!: THREE.ShaderMaterial;
+  private updateMat!: THREE.ShaderMaterial;
   private upsampleMat!: THREE.ShaderMaterial;
 
   private setup() {
@@ -88,26 +88,26 @@ private copyPressureLevelChannelToRed!: THREE.ShaderMaterial;   // copies chosen
 
     this.covBlurH = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
     this.covBlurV = new THREE.WebGLRenderTarget(this.w, this.h, rMip);
-    this.maskRT   = new THREE.WebGLRenderTarget(this.w, this.h, rMip);
-    this.tauRT    = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
-    this.tauLoRT  = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
-    this.tauHiRT  = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+    this.maskRT = new THREE.WebGLRenderTarget(this.w, this.h, rMip);
+    this.tauRT = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+    this.tauLoRT = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+    this.tauHiRT = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
     this.tauBlurH = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
     this.tauBlurV = new THREE.WebGLRenderTarget(this.w, this.h, {
       ...rNoMip,
       generateMipmaps: true,                    // allow LOD sampling if desired
       minFilter: THREE.LinearMipmapLinearFilter
     } as THREE.RenderTargetOptions);
-this.singleRedChannelForPressureLevelTarget = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
+    this.singleRedChannelForPressureLevelTarget = new THREE.WebGLRenderTarget(this.w, this.h, rNoMip);
 
-// Swizzle shader: pick uChan = 0 (R), 1 (G), 2 (B)
-this.copyPressureLevelChannelToRed = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: `
+    // Swizzle shader: pick uChan = 0 (R), 1 (G), 2 (B)
+    this.copyPressureLevelChannelToRed = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: `
     out vec2 vUv;
     void main(){ vUv = 0.5*(position.xy+1.0); gl_Position = vec4(position,1.0); }
   `,
-  fragmentShader: `
+      fragmentShader: `
     precision highp float; in vec2 vUv; out vec4 fragColor;
     uniform sampler2D uSrc;
     uniform int uChan;
@@ -117,8 +117,8 @@ this.copyPressureLevelChannelToRed = new THREE.ShaderMaterial({
       fragColor = vec4(v, 0.0, 0.0, 1.0); // write selected channel into .r
     }
   `,
-  uniforms: { uSrc: { value: null }, uChan: { value: 0 } }
-});
+      uniforms: { uSrc: { value: null }, uChan: { value: 0 } }
+    });
 
 
     const tilesX = Math.ceil(this.w / this.tile);
@@ -219,7 +219,7 @@ this.copyPressureLevelChannelToRed = new THREE.ShaderMaterial({
         }`,
       uniforms: {
         uTau: { value: null }, uTauLo: { value: null }, uTauHi: { value: null },
-        uMask:{ value: null }, uCov:   { value: null },
+        uMask: { value: null }, uCov: { value: null },
         uLod: { value: Math.log2(this.tile) }
       }
     });
@@ -239,14 +239,14 @@ this.copyPressureLevelChannelToRed = new THREE.ShaderMaterial({
     this.quad.geometry.dispose();
     this.quad.material.dispose();
     [this.covBlurH, this.covBlurV, this.maskRT, this.tauRT, this.tauLoRT, this.tauHiRT, this.tauTileRT, this.tauBlurH, this.tauBlurV]
-  .forEach(rt => rt.dispose());
-  this.singleRedChannelForPressureLevelTarget.dispose();
-this.copyPressureLevelChannelToRed.dispose();
+      .forEach(rt => rt.dispose());
+    this.singleRedChannelForPressureLevelTarget.dispose();
+    this.copyPressureLevelChannelToRed.dispose();
 
 
   }
 
-  private draw(mat: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget, viewport?: {w:number,h:number}) {
+  private draw(mat: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget, viewport?: { w: number, h: number }) {
     const r = this.renderer;
     const prevRT = r.getRenderTarget();
     const prevVP = new THREE.Vector4(); r.getViewport(prevVP);
@@ -254,7 +254,7 @@ this.copyPressureLevelChannelToRed.dispose();
     const prevST = r.getScissorTest();
 
     r.setScissorTest(false);
-    if (viewport) r.setViewport(0, 0, viewport.w, viewport.h); else r.setViewport(0,0,this.w,this.h);
+    if (viewport) r.setViewport(0, 0, viewport.w, viewport.h); else r.setViewport(0, 0, this.w, this.h);
 
     this.quad.material = mat;
     r.setRenderTarget(target);
@@ -269,7 +269,7 @@ this.copyPressureLevelChannelToRed.dispose();
 
   runOnce(params: {
     covRawTex: THREE.Texture;    // ERA5 red channel texture (R in [0..1])
-    lookTex:   THREE.Texture;    // fBm look texture (R in [0..1])
+    lookTex: THREE.Texture;    // fBm look texture (R in [0..1])
     iterations?: number;         // 8..12 typical
     colorChannel?: 0 | 1 | 2;   // 0=R, 1=G, 2=B  
   }) {
@@ -284,7 +284,7 @@ this.copyPressureLevelChannelToRed.dispose();
     });
 
     // 0) Swizzle desired RGB -> R (so downstream shaders keep reading .r)
-    this.copyPressureLevelChannelToRed.uniforms.uSrc.value  = covRawTex;
+    this.copyPressureLevelChannelToRed.uniforms.uSrc.value = covRawTex;
     this.copyPressureLevelChannelToRed.uniforms.uChan.value = colorChannel;
     this.draw(this.copyPressureLevelChannelToRed, this.singleRedChannelForPressureLevelTarget);
     // this.singleRedChannelForPressureLevelTarget.texture.generateMipmaps = true;
@@ -306,38 +306,38 @@ this.copyPressureLevelChannelToRed.dispose();
     // 3) Iterate K times
     this.maskMat.uniforms.uLook.value = lookTex;
 
-//     for (let k = 0; k < iterations; k++) {
-//       // Mask at full res
-//       this.maskMat.uniforms.uTau.value = this.tauRT.texture;
-//       this.draw(this.maskMat, this.maskRT);
+    //     for (let k = 0; k < iterations; k++) {
+    //       // Mask at full res
+    //       this.maskMat.uniforms.uTau.value = this.tauRT.texture;
+    //       this.draw(this.maskMat, this.maskRT);
 
-//       // mipmaps for mask & coverage
-//       this.maskRT.texture.generateMipmaps = true;
+    //       // mipmaps for mask & coverage
+    //       this.maskRT.texture.generateMipmaps = true;
 
-//       // Tile update (render to tile RT size)
-//       this.updateMat.uniforms.uTau.value   = this.tauRT.texture;
-//       this.updateMat.uniforms.uTauLo.value = this.tauLoRT.texture;
-//       this.updateMat.uniforms.uTauHi.value = this.tauHiRT.texture;
-//       this.updateMat.uniforms.uMask.value  = this.maskRT.texture;
-//       this.updateMat.uniforms.uCov.value   = this.singleRedChannelForPressureLevelTarget.texture;
+    //       // Tile update (render to tile RT size)
+    //       this.updateMat.uniforms.uTau.value   = this.tauRT.texture;
+    //       this.updateMat.uniforms.uTauLo.value = this.tauLoRT.texture;
+    //       this.updateMat.uniforms.uTauHi.value = this.tauHiRT.texture;
+    //       this.updateMat.uniforms.uMask.value  = this.maskRT.texture;
+    //       this.updateMat.uniforms.uCov.value   = this.singleRedChannelForPressureLevelTarget.texture;
 
-//       this.draw(this.updateMat, this.tauTileRT, { w: this.tauTileRT.width, h: this.tauTileRT.height });
+    //       this.draw(this.updateMat, this.tauTileRT, { w: this.tauTileRT.width, h: this.tauTileRT.height });
 
-//       // Upsample τ/lo/hi back to full res (nearest/bilinear)
-//       this.upsampleMat.uniforms.uSrc.value = this.tauTileRT.texture;
-//       this.draw(this.upsampleMat, this.tauRT);
-//       this.draw(this.upsampleMat, this.tauLoRT);
-//       this.draw(this.upsampleMat, this.tauHiRT);
-//     }
-//     // --- τ blur for Option E ---
-// this.blurHMat.uniforms.uSrc.value = this.tauRT.texture;
-// this.draw(this.blurHMat, this.tauBlurH);
+    //       // Upsample τ/lo/hi back to full res (nearest/bilinear)
+    //       this.upsampleMat.uniforms.uSrc.value = this.tauTileRT.texture;
+    //       this.draw(this.upsampleMat, this.tauRT);
+    //       this.draw(this.upsampleMat, this.tauLoRT);
+    //       this.draw(this.upsampleMat, this.tauHiRT);
+    //     }
+    //     // --- τ blur for Option E ---
+    // this.blurHMat.uniforms.uSrc.value = this.tauRT.texture;
+    // this.draw(this.blurHMat, this.tauBlurH);
 
-// this.blurVMat.uniforms.uSrc.value = this.tauBlurH.texture;
-// this.draw(this.blurVMat, this.tauBlurV);
-// this.tauBlurV.texture.generateMipmaps = true;
+    // this.blurVMat.uniforms.uSrc.value = this.tauBlurH.texture;
+    // this.draw(this.blurVMat, this.tauBlurV);
+    // this.tauBlurV.texture.generateMipmaps = true;
 
-return { singleChannelRawEra5: this.singleRedChannelForPressureLevelTarget.texture, tau: this.tauRT.texture, tauBlur: this.tauBlurV.texture };
+    return { singleChannelRawEra5: this.singleRedChannelForPressureLevelTarget.texture, tau: this.tauRT.texture, tauBlur: this.tauBlurV.texture };
 
 
   }
@@ -534,6 +534,9 @@ uniform int   uMinStepsAdaptive;  // floor, e.g. 8
 uniform int   uMaxStepsAdaptive;  // cap, e.g. 96
 uniform float uMaxStepKm;         // optional physical cap (km per sample), e.g. 2.0 (use <=0 to disable)
 
+uniform float uEdgeL;      // normalized thickness scale for edge fade, try 0.06..0.15
+uniform float uEdgeGamma;  // 0.8..2.0 (1 = linear-in-exp space; >1 tightens the edge)
+
 in vec3 vWorld;   
 out vec4 fragColor;        
 
@@ -649,6 +652,15 @@ bool shellSegment(vec3 ro, vec3 rd, float Rbase, float Rtop, out float t0, out f
   return true;
 }
 
+float edgeFadeT(float t){
+  // t is 0 at base, 1 at top
+  float d = min(t, 1.0 - t);                 // distance to nearest shell boundary (0..0.5)
+  float L = max(1e-4, uEdgeL);               // decay length in t-units
+  float f = 1.0 - exp(-d / L);               // exponential rise away from edge
+  return pow(clamp(f, 0.0, 1.0), uEdgeGamma);
+}
+
+
 struct CloudCtx {
   vec2  uv;        // base equirect UV at p
   float t;         // shell height 0..1
@@ -693,10 +705,10 @@ CloudCtx makeCloudCtx(vec3 p){
 }
 
 float densityWorldTwisted_ctx(in CloudCtx c){
-  // vertical profile
-  float vp = bell01(c.t);
-  return 0.5 * vp * uDensityGain;
-}
+  float vp   = bell01(c.t);                  // your vertical profile
+  float fade = edgeFadeT(c.t);               // NEW: exponential outer-edge fade
+  return 0.5 * vp * fade * uDensityGain;     // was: 0.5 * vp * uDensityGain
+} 
 
 float era5Gate3DColumn_ctx(in CloudCtx c){
   // base coverage at walked UV
@@ -803,9 +815,6 @@ void main(){
 }
 `
 
-
-
-
 // -------------------------------- React component --------------------------------
 type Props = {
   url: string;                               // ERA5 coverage (red channel)
@@ -820,8 +829,8 @@ type Props = {
   tilePx?: number;                           // per-tile solver size (e.g., 32)
   iterations?: number;                       // threshold iterations (e.g., 10)
   pressureLevel: number;
-    gphTex?: THREE.Texture | null;  // geopotential height or DEM, R in [0..1]
-    windTex?: THREE.Texture | null;
+  gphTex?: THREE.Texture | null;  // geopotential height or DEM, R in [0..1]
+  windTex?: THREE.Texture | null;
 };
 
 export default function CloudCoverLayer({
@@ -840,13 +849,13 @@ export default function CloudCoverLayer({
   windTex,
 }: Props) {
   const meshRef = useRef<THREE.Mesh | null>(null);
-  const matRef  = useRef<THREE.ShaderMaterial | null>(null);
+  const matRef = useRef<THREE.ShaderMaterial | null>(null);
   const pipelineRef = useRef<CloudPipelineManager | null>(null);
-  const lookTexRef  = useRef<THREE.Texture | null>(null);
-  const era5CoverageRawRef   = useRef<THREE.Texture | null>(null);
-const volGroupRef = useRef<THREE.Group | null>(null);           // holds proxy + ring meshes
-const rBaseRef = useRef<number>(0);
-const rTopRef  = useRef<number>(0);
+  const lookTexRef = useRef<THREE.Texture | null>(null);
+  const era5CoverageRawRef = useRef<THREE.Texture | null>(null);
+  const volGroupRef = useRef<THREE.Group | null>(null);           // holds proxy + ring meshes
+  const rBaseRef = useRef<number>(0);
+  const rTopRef = useRef<number>(0);
 
 
   useEffect(() => {
@@ -903,267 +912,273 @@ const rTopRef  = useRef<number>(0);
       // ---- Run full pipeline (blur + per-tile threshold iterations) ----
       const { singleChannelRawEra5, tau, tauBlur } = pipelineRef.current.runOnce({
         covRawTex: era5CoverageRawRef.current,
-        lookTex:   lookTexRef.current,
+        lookTex: lookTexRef.current,
         iterations,
         colorChannel: colorChannel
       });
 
       // ---- Build/refresh the visible cloud mesh ----
       // 2) In tryRunPipelineAndAttach() — build/refresh the visible cloud mesh
-const globeRadius = getGlobeRadius();
-const SHELLS = 0;
-// remove any previous group
-if (volGroupRef.current) {
-  scene!.remove(volGroupRef.current);
-  volGroupRef.current.children.forEach(c => {
-    // @ts-ignore
-    c.geometry?.dispose?.();
-    // @ts-ignore
-    c.material?.dispose?.();
-  });
-  volGroupRef.current = null;
-}
+      const globeRadius = getGlobeRadius();
+      const SHELLS = 0;
+      // remove any previous group
+      if (volGroupRef.current) {
+        scene!.remove(volGroupRef.current);
+        volGroupRef.current.children.forEach(c => {
+          // @ts-ignore
+          c.geometry?.dispose?.();
+          // @ts-ignore
+          c.material?.dispose?.();
+        });
+        volGroupRef.current = null;
+      }
 
-// decide initial radii (editable later)
-const globeRadiusBounds = proxySphereRadiusFromPressure(pressureLevel);
-rBaseRef.current = globeRadius + globeRadiusBounds[0];
-rTopRef.current  = globeRadius + globeRadiusBounds[1];
+      // decide initial radii (editable later)
+      const globeRadiusBounds = proxySphereRadiusFromPressure(pressureLevel);
+      rBaseRef.current = globeRadius + globeRadiusBounds[0];
+      rTopRef.current = globeRadius + globeRadiusBounds[1];
 
-// make a group: [proxyMesh (translucent)] + [ringBase, ringTop] for verification
-const g = new THREE.Group();
+      // make a group: [proxyMesh (translucent)] + [ringBase, ringTop] for verification
+      const g = new THREE.Group();
 
-// 1) proxy sphere at R_top (shader that visualizes shell thickness)
-{
-  // when creating the material:
-const size = new THREE.Vector2();
-renderer!.getSize(size);                      // CSS pixels
-const dpr = renderer!.getPixelRatio();        // device pixel ratio
-const drawW = Math.round(size.x * dpr);       // drawing buffer size
-const drawH = Math.round(size.y * dpr);
-
-
-  const geom = new THREE.SphereGeometry(1, 256, 128);
-  const mat  = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
-    vertexShader:   CLOUD_PROXY_VERT,
-    fragmentShader: CLOUD_PROXY_FRAG,
-    transparent: true,
-    depthTest: true,
-    depthWrite: false,
-    blending: THREE.NormalBlending,
-    side: THREE.DoubleSide,
-    premultipliedAlpha: true,
-    uniforms: {
-      uCamPos:  { value: camera!.position.clone() },
-      uRBase:   { value: rBaseRef.current },
-      uRTop:    { value: rTopRef.current },
-      uWorldToKm: { value: 6371/173 },
-      uDensityGain: { value: 1.0 },
-      uSeed: { value: 4 },
-      uLook:     { value: lookTexRef.current },
-      uCov:      { value: singleChannelRawEra5 },
-      uEps:      { value: 0.6 },
-      uLonOffset:{ value: 0.25 },
-      uFlipV:    { value: true },
-      uK:        { value: 0.4 },
-      uSigmaT: { value: 2.0 },
-      uWalkAmpDeg: { value: 1.0 },
-      uWalkFreq: { value: 10.0 },
-      uCloudBrightness: { value: 0.9 },
-      uMaxTStep: { value: 1.3 },
-      uMinStepsAdaptive: { value: 4 },
-      uMaxStepsAdaptive: { value: 12 },
-      uMaxStepKm: { value: 3 }
-    }
-  });
-  mat.toneMapped = false;
-
-  paneHubDisposeCleanup.push(
-  PaneHub.bind(
-    `3d cloud cover`,
-    {    
-      uMaxTStep: { type: "number", uniform: "uMaxTStep", min: 0, max: 10, step: 0.01 },
-      uMinStepsAdaptive: { type: "number", uniform: "uMinStepsAdaptive", min: 0, max: 100, step: 1 },
-      uMaxStepsAdaptive: { type: "number", uniform: "uMaxStepsAdaptive", min: 0, max: 250, step: 1 },
-      uMaxStepKm: { type: "number", uniform: "uMaxStepKm", min: 0, max: 100, step: 1 },
-uWorldToKm: { type: "number", uniform: "uWorldToKm", min: 0, max: 100, step: 0.01 },
-uDensityGain: { type: "number", uniform: "uDensityGain", min: 0, max: 50, step: 0.01 },
-uSeed: { type: "number", uniform: "uSeed", min: 0, max: 100, step: 1.0 },
-uEps: { type: "number", uniform: "uEps", min: 0, max: 10, step: 0.001 },
-uK: { type: "number", uniform: "uK", min: 0, max: 2, step: 0.01 },
-uSigmaT: { type: "number", uniform: "uSigmaT", min: 0, max: 5, step: 0.01 },
-uWalkAmpDeg: { type: "number", uniform: "uWalkAmpDeg", min: 0, max: 1, step: 0.01 },
-uWalkFreq: { type: "number", uniform: "uWalkFreq", min: 0, max: 10, step: 0.1 },
-uCloudBrightness: { type: "number", uniform: "uCloudBrightness", min: 0, max: 1, step: 0.01 },
-    }, mat))
+      // 1) proxy sphere at R_top (shader that visualizes shell thickness)
+      {
+        // when creating the material:
+        const size = new THREE.Vector2();
+        renderer!.getSize(size);                      // CSS pixels
+        const dpr = renderer!.getPixelRatio();        // device pixel ratio
+        const drawW = Math.round(size.x * dpr);       // drawing buffer size
+        const drawH = Math.round(size.y * dpr);
 
 
-  const proxy = new THREE.Mesh(geom, mat);
-  proxy.scale.setScalar(rTopRef.current);   // keep the sphere scaled to R_top (nice for debugging)
-  proxy.renderOrder = 16;
-  proxy.userData.isCloudProxy = true;
-  g.add(proxy);
-}
+        const geom = new THREE.SphereGeometry(1, 256, 128);
+        const mat = new THREE.ShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: CLOUD_PROXY_VERT,
+          fragmentShader: CLOUD_PROXY_FRAG,
+          transparent: true,
+          depthTest: true,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+          side: THREE.DoubleSide,
+          premultipliedAlpha: true,
+          uniforms: {
+            uCamPos: { value: camera!.position.clone() },
+            uRBase: { value: rBaseRef.current },
+            uRTop: { value: rTopRef.current },
+            uWorldToKm: { value: 6371 / 173 },
+            uDensityGain: { value: 1.0 },
+            uSeed: { value: 4 },
+            uLook: { value: lookTexRef.current },
+            uCov: { value: singleChannelRawEra5 },
+            uEps: { value: 0.6 },
+            uLonOffset: { value: 0.25 },
+            uFlipV: { value: true },
+            uK: { value: 0.4 },
+            uSigmaT: { value: 2.0 },
+            uWalkAmpDeg: { value: 1.0 },
+            uWalkFreq: { value: 10.0 },
+            uCloudBrightness: { value: 0.9 },
+            uMaxTStep: { value: 1.3 },
+            uMinStepsAdaptive: { value: 4 },
+            uMaxStepsAdaptive: { value: 12 },
+            uMaxStepKm: { value: 3 },
+            uEdgeL: { value: 0.1 },
+            uEdgeGamma: { value: 1.3 },
+          }
+        });
+        mat.toneMapped = false;
+
+        paneHubDisposeCleanup.push(
+          PaneHub.bind(
+            `Cloud Cover`,
+            {
+              uEdgeL: { type: "number", uniform: "uEdgeL", min: 0, max: 10, step: 0.01 },
+              uEdgeGamma: { type: "number", uniform: "uEdgeGamma", min: 0, max: 10, step: 0.01 },
+              uMaxTStep: { type: "number", uniform: "uMaxTStep", min: 0, max: 10, step: 0.01 },
+              uMinStepsAdaptive: { type: "number", uniform: "uMinStepsAdaptive", min: 0, max: 100, step: 1 },
+              uMaxStepsAdaptive: { type: "number", uniform: "uMaxStepsAdaptive", min: 0, max: 250, step: 1 },
+              uMaxStepKm: { type: "number", uniform: "uMaxStepKm", min: 0, max: 100, step: 1 },
+              uWorldToKm: { type: "number", uniform: "uWorldToKm", min: 0, max: 100, step: 0.01 },
+              uDensityGain: { type: "number", uniform: "uDensityGain", min: 0, max: 50, step: 0.01 },
+              uSeed: { type: "number", uniform: "uSeed", min: 0, max: 100, step: 1.0 },
+              uEps: { type: "number", uniform: "uEps", min: 0, max: 10, step: 0.001 },
+              uK: { type: "number", uniform: "uK", min: 0, max: 2, step: 0.01 },
+              uSigmaT: { type: "number", uniform: "uSigmaT", min: 0, max: 5, step: 0.01 },
+              uWalkAmpDeg: { type: "number", uniform: "uWalkAmpDeg", min: 0, max: 1, step: 0.01 },
+              uWalkFreq: { type: "number", uniform: "uWalkFreq", min: 0, max: 10, step: 0.1 },
+              uCloudBrightness: { type: "number", uniform: "uCloudBrightness", min: 0, max: 1, step: 0.01 },
+            }, mat))
 
 
-// 2) thin ring at R_base (wireframe)
-{
-  const geom = new THREE.SphereGeometry(1, 64, 32);
-  const wire = new THREE.WireframeGeometry(geom);
-  const mat  = new THREE.LineBasicMaterial({ color: 0xFFD54F, transparent: true, opacity: 0.9 });
-  const ring = new THREE.LineSegments(wire, mat);
-  ring.scale.setScalar(rBaseRef.current);
-  ring.renderOrder = 15;
-  g.add(ring);
-}
-
-// 3) thin ring at R_top (wireframe)
-{
-  const geom = new THREE.SphereGeometry(1, 64, 32);
-  const wire = new THREE.WireframeGeometry(geom);
-  const mat  = new THREE.LineBasicMaterial({ color: 0x64B5F6, transparent: true, opacity: 0.9 });
-  const ring = new THREE.LineSegments(wire, mat);
-  ring.scale.setScalar(rTopRef.current);
-  ring.renderOrder = 15;
-  g.add(ring);
-}
-
-g.frustumCulled = false;
-scene!.add(g);
-volGroupRef.current = g;
-
-// we’ll drive radius in the shader, so use a unit sphere here
-const geom = new THREE.SphereGeometry(1, 256, 128);
-
-if (!meshRef.current) {
-  const mat = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-    vertexShader:   CLOUD_SHELL_VERT,   // <- use new vert
-    fragmentShader: CLOUD_FRAG,         // same frag
-  transparent: true,
-  depthWrite: false,
-    depthTest: true,
-    blending: THREE.NormalBlending,
-  uniforms: {
-      // existing uniforms
-      uOpacity:  { value: opacity },  
-      uLook:     { value: lookTexRef.current },
-      uTau:      { value: tau },
-      uCov:      { value: singleChannelRawEra5 },
-      uEps:      { value: feather },
-      uLonOffset:{ value: 0.25 },
-      uFlipV:    { value: true },
-      uTauBlur:  { value: tauBlur },
-      uUseTauBlur: { value: true },
-      uK:        { value: 0.7 },
-
-      // NEW shell uniforms
-      uBaseR:      { value: globeRadius + 0.25 }, // same as your old overlayR
-      uDz:         { value: 0.5 },                 // start with zero spacing
-      uShellCount: { value: SHELLS },
-
-          uLayerFalloff:     { value: 0.2 },  // how much the outermost fades (0.6 ≈ 40% lighter)
-    uDensityJitterAmp: { value: 0.1 }, // ±15% alpha jitter per shell/uv
-    uFeatherJitterAmp: { value: 0.003 }, // +0.003 feather per shell
-    uShellOffsetScale: { value: 0.0001 },  
-          uZOffset:        { value: zOffsetForPressure(pressureLevel) },        // <- main slider
-      uUseTerrain:     { value: !!( gphTex ?? null ) },
-      uTerrainTexture: { value: gphTex ?? null },
-      uExaggeration:   { value: 1.0 },
-      uAboveTerrain:   { value: 0.0 },    
-       uPressure:       { value: pressureLevel },  
-    }
-  });
-  mat.toneMapped = false;
-  
-  // Controls for your CLOUD_SHELL material
-paneHubDisposeCleanup.push(
-  PaneHub.bind(
-    `Cloud Cover (${pressureLevel} hPa)`,
-    {
-      Epsilon: {
-        type: "number",
-        uniform: "uEps",
-        min: 0.0,
-        max: 0.1,
-        step: 0.001,
-      },
-      CoverageBlendK: {
-        type: "number",
-        uniform: "uK",
-        min: 0.0,
-        max: 1.0,
-        step: 0.01,
-      },
-      ShellSpacing_uDz: {
-        type: "number",
-        uniform: "uDz",
-        min: 0.0,
-        max: 10.0,
-        step: 0.1,
-      },
-      LayerFalloff: {
-        type: "number",
-        uniform: "uLayerFalloff",
-        min: 0.0,
-        max: 1.0,
-        step: 0.01,
-      },
-      DensityJitterAmp: {
-        type: "number",
-        uniform: "uDensityJitterAmp",
-        min: 0.0,
-        max: 1.0,
-        step: 0.01,
-      },
-      FeatherJitterAmp: {
-        type: "number",
-        uniform: "uFeatherJitterAmp",
-        min: 0.0,
-        max: 0.5,
-        step: 0.001,
-      },
-    ShellOffsetScale: { type: "number", uniform: "uShellOffsetScale", min: 0.0, max: 0.001, step: 0.0001 },
-       Z_Offset:          { type: "number", uniform: "uZOffset", min: -10.0, max: 10.0, step: 0.01 },
-
-        TerrainExaggeration: { type: "number", uniform: "uExaggeration", min: 0.0, max: 100.0, step: 1.0 },
-        Above_Terrain_m:   { type: "number", uniform: "uAboveTerrain", min: -50.0, max: 50.0, step: 1.0 },
-  Use_Terrain: {
-      type: "boolean",
-      uniform: "uUseTerrain",
-      value: !!gphTex,
-    },
-      },
-    mat
-  )
-);
+        const proxy = new THREE.Mesh(geom, mat);
+        proxy.scale.setScalar(rTopRef.current);   // keep the sphere scaled to R_top (nice for debugging)
+        proxy.renderOrder = 16;
+        proxy.userData.isCloudProxy = true;
+        g.add(proxy);
+      }
 
 
-  // create instanced mesh with 5 instances
-  // const inst = new THREE.InstancedMesh(geom, mat, SHELLS);
+      // 2) thin ring at R_base (wireframe)
+      {
+        const geom = new THREE.SphereGeometry(1, 64, 32);
+        const wire = new THREE.WireframeGeometry(geom);
+        const mat = new THREE.LineBasicMaterial({ color: 0xFFD54F, transparent: true, opacity: 0.9 });
+        const ring = new THREE.LineSegments(wire, mat);
+        ring.scale.setScalar(rBaseRef.current);
+        // ring.renderOrder = 15;
+        ring.visible = false;
+        g.add(ring);
+      }
 
-  // // set per-instance matrices to identity
-  // const m = new THREE.Matrix4();
-  // for (let i = 0; i < SHELLS; i++) inst.setMatrixAt(i, m);
+      // 3) thin ring at R_top (wireframe)
+      {
+        const geom = new THREE.SphereGeometry(1, 64, 32);
+        const wire = new THREE.WireframeGeometry(geom);
+        const mat = new THREE.LineBasicMaterial({ color: 0x64B5F6, transparent: true, opacity: 0.9 });
+        const ring = new THREE.LineSegments(wire, mat);
+        ring.scale.setScalar(rTopRef.current);
+        // ring.renderOrder = 15;
+        ring.visible = false;
+        g.add(ring);
+      }
 
-  // inst.instanceMatrix.needsUpdate = true;
-  // inst.frustumCulled = false;
-  // inst.renderOrder   = 15;
+      g.frustumCulled = false;
+      scene!.add(g);
+      volGroupRef.current = g;
 
-  // scene!.add(inst);
-  // meshRef.current = inst as unknown as THREE.Mesh;  // keep your refs happy
-  // matRef.current  = mat;
-} else {
-  const mat = matRef.current!;
-  mat.uniforms.uLook.value    = lookTexRef.current;
-  mat.uniforms.uTau.value     = tau;
-  mat.uniforms.uCov.value     = singleChannelRawEra5;
-  mat.uniforms.uTauBlur.value = tauBlur;
+      // we’ll drive radius in the shader, so use a unit sphere here
+      const geom = new THREE.SphereGeometry(1, 256, 128);
 
-  // (optional live tweak) — you can expose these later
-  // mat.uniforms.uDz.value = 0.0;
-  // mat.uniforms.uBaseR.value = globeRadius + 0.25;
-}
+      if (!meshRef.current) {
+        //   const mat = new THREE.ShaderMaterial({
+        //   glslVersion: THREE.GLSL3,
+        //     vertexShader:   CLOUD_SHELL_VERT,   // <- use new vert
+        //     fragmentShader: CLOUD_FRAG,         // same frag
+        //   transparent: true,
+        //   depthWrite: false,
+        //     depthTest: true,
+        //     blending: THREE.NormalBlending,
+        //   uniforms: {
+        //       // existing uniforms
+        //       uOpacity:  { value: opacity },  
+        //       uLook:     { value: lookTexRef.current },
+        //       uTau:      { value: tau },
+        //       uCov:      { value: singleChannelRawEra5 },
+        //       uEps:      { value: feather },
+        //       uLonOffset:{ value: 0.25 },
+        //       uFlipV:    { value: true },
+        //       uTauBlur:  { value: tauBlur },
+        //       uUseTauBlur: { value: true },
+        //       uK:        { value: 0.7 },
+
+        //       // NEW shell uniforms
+        //       uBaseR:      { value: globeRadius + 0.25 }, // same as your old overlayR
+        //       uDz:         { value: 0.5 },                 // start with zero spacing
+        //       uShellCount: { value: SHELLS },
+
+        //           uLayerFalloff:     { value: 0.2 },  // how much the outermost fades (0.6 ≈ 40% lighter)
+        //     uDensityJitterAmp: { value: 0.1 }, // ±15% alpha jitter per shell/uv
+        //     uFeatherJitterAmp: { value: 0.003 }, // +0.003 feather per shell
+        //     uShellOffsetScale: { value: 0.0001 },  
+        //           uZOffset:        { value: zOffsetForPressure(pressureLevel) },        // <- main slider
+        //       uUseTerrain:     { value: !!( gphTex ?? null ) },
+        //       uTerrainTexture: { value: gphTex ?? null },
+        //       uExaggeration:   { value: 1.0 },
+        //       uAboveTerrain:   { value: 0.0 },    
+        //        uPressure:       { value: pressureLevel },  
+        //     }
+        //   });
+        //   mat.toneMapped = false;
+
+        //   // Controls for your CLOUD_SHELL material
+        // paneHubDisposeCleanup.push(
+        //   PaneHub.bind(
+        //     `Cloud Cover (${pressureLevel} hPa)`,
+        //     {
+        //       Epsilon: {
+        //         type: "number",
+        //         uniform: "uEps",
+        //         min: 0.0,
+        //         max: 0.1,
+        //         step: 0.001,
+        //       },
+        //       CoverageBlendK: {
+        //         type: "number",
+        //         uniform: "uK",
+        //         min: 0.0,
+        //         max: 1.0,
+        //         step: 0.01,
+        //       },
+        //       ShellSpacing_uDz: {
+        //         type: "number",
+        //         uniform: "uDz",
+        //         min: 0.0,
+        //         max: 10.0,
+        //         step: 0.1,
+        //       },
+        //       LayerFalloff: {
+        //         type: "number",
+        //         uniform: "uLayerFalloff",
+        //         min: 0.0,
+        //         max: 1.0,
+        //         step: 0.01,
+        //       },
+        //       DensityJitterAmp: {
+        //         type: "number",
+        //         uniform: "uDensityJitterAmp",
+        //         min: 0.0,
+        //         max: 1.0,
+        //         step: 0.01,
+        //       },
+        //       FeatherJitterAmp: {
+        //         type: "number",
+        //         uniform: "uFeatherJitterAmp",
+        //         min: 0.0,
+        //         max: 0.5,
+        //         step: 0.001,
+        //       },
+        //     ShellOffsetScale: { type: "number", uniform: "uShellOffsetScale", min: 0.0, max: 0.001, step: 0.0001 },
+        //        Z_Offset:          { type: "number", uniform: "uZOffset", min: -10.0, max: 10.0, step: 0.01 },
+
+        //         TerrainExaggeration: { type: "number", uniform: "uExaggeration", min: 0.0, max: 100.0, step: 1.0 },
+        //         Above_Terrain_m:   { type: "number", uniform: "uAboveTerrain", min: -50.0, max: 50.0, step: 1.0 },
+        //   Use_Terrain: {
+        //       type: "boolean",
+        //       uniform: "uUseTerrain",
+        //       value: !!gphTex,
+        //     },
+        //       },
+        //     mat
+        //   )
+        // );
+
+
+        // create instanced mesh with 5 instances
+        // const inst = new THREE.InstancedMesh(geom, mat, SHELLS);
+
+        // // set per-instance matrices to identity
+        // const m = new THREE.Matrix4();
+        // for (let i = 0; i < SHELLS; i++) inst.setMatrixAt(i, m);
+
+        // inst.instanceMatrix.needsUpdate = true;
+        // inst.frustumCulled = false;
+        // inst.renderOrder   = 15;
+
+        // scene!.add(inst);
+        // meshRef.current = inst as unknown as THREE.Mesh;  // keep your refs happy
+        // matRef.current  = mat;
+      } else {
+        const mat = matRef.current!;
+        mat.uniforms.uLook.value = lookTexRef.current;
+        mat.uniforms.uTau.value = tau;
+        mat.uniforms.uCov.value = singleChannelRawEra5;
+        mat.uniforms.uTauBlur.value = tauBlur;
+
+        // (optional live tweak) — you can expose these later
+        // mat.uniforms.uDz.value = 0.0;
+        // mat.uniforms.uBaseR.value = globeRadius + 0.25;
+      }
 
 
       renderer!.render(scene!, camera!);
@@ -1171,52 +1186,52 @@ paneHubDisposeCleanup.push(
 
     return () => {
       disposed = true;
-      for (const d of paneHubDisposeCleanup){
+      for (const d of paneHubDisposeCleanup) {
         if (d) d();
       }
 
       if (volGroupRef.current && scene) {
-  scene.remove(volGroupRef.current);
-  volGroupRef.current.children.forEach(c => {
-    // @ts-ignore
-    c.geometry?.dispose?.();
-    // @ts-ignore
-    c.material?.dispose?.();
-  });
-  volGroupRef.current = null;
-}
+        scene.remove(volGroupRef.current);
+        volGroupRef.current.children.forEach(c => {
+          // @ts-ignore
+          c.geometry?.dispose?.();
+          // @ts-ignore
+          c.material?.dispose?.();
+        });
+        volGroupRef.current = null;
+      }
 
       pipelineRef.current?.dispose(); pipelineRef.current = null;
       if (meshRef.current && scene) scene.remove(meshRef.current);
       meshRef.current?.geometry.dispose();
       (meshRef.current?.material as THREE.ShaderMaterial | undefined)?.dispose?.();
       meshRef.current = null;
-      matRef.current  = null;
-      era5CoverageRawRef.current?.dispose();  era5CoverageRawRef.current  = null;
+      matRef.current = null;
+      era5CoverageRawRef.current?.dispose(); era5CoverageRawRef.current = null;
       lookTexRef.current?.dispose(); lookTexRef.current = null;
     };
   }, [enabled, url, renderer, scene, camera, opacity, feather, eraSize.w, eraSize.h, tilePx, iterations, gphTex, windTex]);
 
   // Live param updates
   useEffect(() => { if (matRef.current) matRef.current.uniforms.uOpacity.value = opacity; }, [opacity]);
-  useEffect(() => { if (matRef.current) matRef.current.uniforms.uEps.value     = feather; }, [feather]);
+  useEffect(() => { if (matRef.current) matRef.current.uniforms.uEps.value = feather; }, [feather]);
 
   useEffect(() => {
-  if (!scene || !camera) return;
-  let raf = 0;
-  const tick = () => {
-    scene.traverse(obj => {
-      const mat = (obj as any).material as THREE.ShaderMaterial;
-      if (mat && mat.uniforms && mat.uniforms.uCamPos) {
-        mat.uniforms.uCamPos.value.copy((camera as any).position);
-      }
+    if (!scene || !camera) return;
+    let raf = 0;
+    const tick = () => {
+      scene.traverse(obj => {
+        const mat = (obj as any).material as THREE.ShaderMaterial;
+        if (mat && mat.uniforms && mat.uniforms.uCamPos) {
+          mat.uniforms.uCamPos.value.copy((camera as any).position);
+        }
 
-    });
+      });
+      raf = requestAnimationFrame(tick);
+    };
     raf = requestAnimationFrame(tick);
-  };
-  raf = requestAnimationFrame(tick);
-  return () => cancelAnimationFrame(raf);
-}, [scene, camera]);
+    return () => cancelAnimationFrame(raf);
+  }, [scene, camera]);
 
 
   return null;

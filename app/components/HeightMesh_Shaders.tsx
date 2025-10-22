@@ -176,7 +176,6 @@ const UV_POINTS_VERT = `
   uniform int uGridW;
   uniform int uGridH;
   uniform int uStep;
-  uniform float uAboveTerrain;
   uniform float zOffset;
   flat out int vId;
   out float particleOpacity;
@@ -189,7 +188,7 @@ const UV_POINTS_VERT = `
     // 3) sample field height (0..uExaggeration mapped by your get_position_z_glsl3)
     //    and lift along the outward normal
     float hNorm = get_position_z_glsl3(uTerrainTexture, uv, 1.0); // returns t in [0,1] (because we pass 1.0)
-    float hWorld = uExaggeration * 50.0 * hNorm + uAboveTerrain;
+    float hWorld = uExaggeration * 50.0 * hNorm;
 
     vec3 normal = normalize(basePos);
     vec3 worldPos = basePos + normal * hWorld;
@@ -603,17 +602,17 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const [wind250Tex, setWind250Tex] = useState<THREE.Texture | null>(null);
   const statsRef = useRef<Stats | null>(null);
 
-const render = useCallback(() => {
-  const renderer = rendererRef.current;
-  const scene = sceneRef.current;
-  const camera = cameraRef.current;
-  const stats = statsRef.current;
-  if (!renderer || !scene || !camera) return;
+  const render = useCallback(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const stats = statsRef.current;
+    if (!renderer || !scene || !camera) return;
 
-  stats?.begin();
-  renderer.render(scene, camera);
-  stats?.end();
-}, []);
+    stats?.begin();
+    renderer.render(scene, camera);
+    stats?.end();
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -706,107 +705,107 @@ const render = useCallback(() => {
       if (!animating) renderOnce();
     });
 
-// ===== Hover-to-rotate (no mousedown) with light inertia =====
-controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
-controls.minPolarAngle = 0.0001;
-controls.maxPolarAngle = Math.PI - 0.0001;
-controls.minAzimuthAngle = -Infinity;
-controls.maxAzimuthAngle = Infinity;
+    // ===== Hover-to-rotate (no mousedown) with light inertia =====
+    controls.enableRotate = false; // avoid built-in drag rotation (we'll do it)
+    controls.minPolarAngle = 0.0001;
+    controls.maxPolarAngle = Math.PI - 0.0001;
+    controls.minAzimuthAngle = -Infinity;
+    controls.maxAzimuthAngle = Infinity;
 
-// Helper: recompute local frame, build F/R, make quaternion, and log
-function previewCameraOrientationFromYawPitch(yaw: number, pitch: number) {
-// 1) Local frame at current camera position
-const U = new THREE.Vector3().copy(camera.position).sub(CENTER).normalize();
-const ref = Math.abs(U.y) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-const E = new THREE.Vector3().crossVectors(ref, U).normalize();
-const N = new THREE.Vector3().crossVectors(U, E).normalize();
+    // Helper: recompute local frame, build F/R, make quaternion, and log
+    function previewCameraOrientationFromYawPitch(yaw: number, pitch: number) {
+      // 1) Local frame at current camera position
+      const U = new THREE.Vector3().copy(camera.position).sub(CENTER).normalize();
+      const ref = Math.abs(U.y) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+      const E = new THREE.Vector3().crossVectors(ref, U).normalize();
+      const N = new THREE.Vector3().crossVectors(U, E).normalize();
 
-// (a) pre-tilt base forward to effective band
-const N_p  = new THREE.Vector3().copy(N).applyAxisAngle(E, pitch);
+      // (a) pre-tilt base forward to effective band
+      const N_p = new THREE.Vector3().copy(N).applyAxisAngle(E, pitch);
 
-// (b) yaw around gravity at that band
-const F = new THREE.Vector3().copy(N_p).applyAxisAngle(U, yaw);
+      // (b) yaw around gravity at that band
+      const F = new THREE.Vector3().copy(N_p).applyAxisAngle(U, yaw);
 
-// 3) Build a no-roll basis *around* the pitched F (keep F as-is)
-const G = U; // gravity (local radial up)
-const R = new THREE.Vector3().copy(F).cross(G).normalize();     // sideways, level w.r.t gravity
-const U_cam = new THREE.Vector3().copy(R).cross(F).normalize(); // camera up, orthogonal to F & R
+      // 3) Build a no-roll basis *around* the pitched F (keep F as-is)
+      const G = U; // gravity (local radial up)
+      const R = new THREE.Vector3().copy(F).cross(G).normalize();     // sideways, level w.r.t gravity
+      const U_cam = new THREE.Vector3().copy(R).cross(F).normalize(); // camera up, orthogonal to F & R
 
-// 4) Convert {R, U_cam, F} -> quaternion (camera looks down -Z, so Z = -F)
-const Z = new THREE.Vector3().copy(F).negate();
-const rot = new THREE.Matrix4().makeBasis(R, U_cam, Z);
-const qCam = new THREE.Quaternion().setFromRotationMatrix(rot);
+      // 4) Convert {R, U_cam, F} -> quaternion (camera looks down -Z, so Z = -F)
+      const Z = new THREE.Vector3().copy(F).negate();
+      const rot = new THREE.Matrix4().makeBasis(R, U_cam, Z);
+      const qCam = new THREE.Quaternion().setFromRotationMatrix(rot);
 
-  return { U, E, N, F, R, U_cam, qCam };
-}
+      return { U, E, N, F, R, U_cam, qCam };
+    }
 
 
-// ---- add this block: preview yaw/pitch from mouse, no camera change ----
-const elem = renderer.domElement;
+    // ---- add this block: preview yaw/pitch from mouse, no camera change ----
+    const elem = renderer.domElement;
 
-// --- pointer lock helpers ---
-function onPointerLockChange() {
-  const locked = document.pointerLockElement === elem;
+    // --- pointer lock helpers ---
+    function onPointerLockChange() {
+      const locked = document.pointerLockElement === elem;
 
-  // Visual hint
-  elem.style.cursor = locked ? "none" : "grab";
+      // Visual hint
+      elem.style.cursor = locked ? "none" : "grab";
 
-  // Only track mouse when locked
-  if (locked) {
-    elem.addEventListener("mousemove", onMouseMove);
-    // kick render loop in case user locked while standing still
-    startDampedRAF();
-  } else {
-    elem.removeEventListener("mousemove", onMouseMove);
-  }
-}
+      // Only track mouse when locked
+      if (locked) {
+        elem.addEventListener("mousemove", onMouseMove);
+        // kick render loop in case user locked while standing still
+        startDampedRAF();
+      } else {
+        elem.removeEventListener("mousemove", onMouseMove);
+      }
+    }
 
-function onPointerLockError() {
-  console.warn("[PointerLock] request failed (browser/permission)");
-}
+    function onPointerLockError() {
+      console.warn("[PointerLock] request failed (browser/permission)");
+    }
 
-// Click to lock (or right after a key press if you prefer)
-function onCanvasClick(e: MouseEvent) {
-  // optional: left button only
-  if (e.button === 0) {
-    // Required by some browsers: must be in a user gesture handler
-    elem.requestPointerLock();
-  }
-}
+    // Click to lock (or right after a key press if you prefer)
+    function onCanvasClick(e: MouseEvent) {
+      // optional: left button only
+      if (e.button === 0) {
+        // Required by some browsers: must be in a user gesture handler
+        elem.requestPointerLock();
+      }
+    }
 
-// Optional: provide a manual release shortcut in addition to Esc
-function onReleaseKey(e: KeyboardEvent) {
-  // Esc already works automatically; this is just a manual override on 'q'
-  if (e.key.toLowerCase() === "q" && document.pointerLockElement === elem) {
-    document.exitPointerLock();
-  }
-}
+    // Optional: provide a manual release shortcut in addition to Esc
+    function onReleaseKey(e: KeyboardEvent) {
+      // Esc already works automatically; this is just a manual override on 'q'
+      if (e.key.toLowerCase() === "q" && document.pointerLockElement === elem) {
+        document.exitPointerLock();
+      }
+    }
 
-// Hook up events
-elem.addEventListener("click", onCanvasClick);
-document.addEventListener("pointerlockchange", onPointerLockChange);
-document.addEventListener("pointerlockerror", onPointerLockError);
-window.addEventListener("keydown", onReleaseKey);
+    // Hook up events
+    elem.addEventListener("click", onCanvasClick);
+    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("pointerlockerror", onPointerLockError);
+    window.addEventListener("keydown", onReleaseKey);
 
-function onMouseMove(e: MouseEvent) {
-  // 1) integrate yaw/pitch from mouse deltas (no frame-time scaling on purpose)
-  const dx = e.movementX || 0;
-  const dy = e.movementY || 0;
-  yaw -= dx * MOUSE_SENS;
-  pitch = THREE.MathUtils.clamp(pitch - dy * MOUSE_SENS, -PITCH_MAX, PITCH_MAX);
+    function onMouseMove(e: MouseEvent) {
+      // 1) integrate yaw/pitch from mouse deltas (no frame-time scaling on purpose)
+      const dx = e.movementX || 0;
+      const dy = e.movementY || 0;
+      yaw -= dx * MOUSE_SENS;
+      pitch = THREE.MathUtils.clamp(pitch - dy * MOUSE_SENS, -PITCH_MAX, PITCH_MAX);
 
-    // Build camera basis & quaternion from current yaw/pitch at THIS position
-  const { F, U_cam, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
- camera.up.copy(U_cam);
-  // 1) Apply orientation
-  camera.quaternion.copy(qCam);
+      // Build camera basis & quaternion from current yaw/pitch at THIS position
+      const { F, U_cam, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
+      camera.up.copy(U_cam);
+      // 1) Apply orientation
+      camera.quaternion.copy(qCam);
 
-  // 2) Keep OrbitControls happy: aim its target where we're looking
-  controls.target.copy(camera.position).add(F);
+      // 2) Keep OrbitControls happy: aim its target where we're looking
+      controls.target.copy(camera.position).add(F);
 
-  // 3) Kick your on-demand render/damping loop
-  startDampedRAF();
-}
+      // 3) Kick your on-demand render/damping loop
+      startDampedRAF();
+    }
 
     // ------------------ WASD: walk by camera heading on the globe ------------------
     const CENTER = new THREE.Vector3(0, 0, 0);
@@ -816,32 +815,32 @@ function onMouseMove(e: MouseEvent) {
 
     const SURFACE_SPEED = 200; // world units/sec along the surface
 
-// scratch
-const n = new THREE.Vector3();
-const screenUp = new THREE.Vector3();
-const screenRight = new THREE.Vector3();
-const fwdT = new THREE.Vector3();
-const rightT = new THREE.Vector3();
-const axis = new THREE.Vector3();
-const q = new THREE.Quaternion();
+    // scratch
+    const n = new THREE.Vector3();
+    const screenUp = new THREE.Vector3();
+    const screenRight = new THREE.Vector3();
+    const fwdT = new THREE.Vector3();
+    const rightT = new THREE.Vector3();
+    const axis = new THREE.Vector3();
+    const q = new THREE.Quaternion();
 
-// ---- add these: local tangent frame scratch ----
-const east = new THREE.Vector3();   // +longitude tangent
-const north = new THREE.Vector3();  // +latitude (toward N pole)
-const refAxis = new THREE.Vector3();// degeneracy helper near poles
+    // ---- add these: local tangent frame scratch ----
+    const east = new THREE.Vector3();   // +longitude tangent
+    const north = new THREE.Vector3();  // +latitude (toward N pole)
+    const refAxis = new THREE.Vector3();// degeneracy helper near poles
 
-// ---- add these: mouse-look "state" and preview scratch ----
-let yaw = 0;                        // radians
-const PITCH_MAX = THREE.MathUtils.degToRad(89.99); // clamp so we never flip
-let pitch = -(PITCH_MAX - 1e-4);                      // radians
-const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
+    // ---- add these: mouse-look "state" and preview scratch ----
+    let yaw = 0;                        // radians
+    const PITCH_MAX = THREE.MathUtils.degToRad(89.99); // clamp so we never flip
+    let pitch = -(PITCH_MAX - 1e-4);                      // radians
+    const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
 
     function onKeyDown(e: KeyboardEvent) {
-  const k = e.key.toLowerCase();
-  if ([" "].includes(k)) e.preventDefault();
-  pressed.add(k);
-  startMoveLoop();
-}
+      const k = e.key.toLowerCase();
+      if ([" "].includes(k)) e.preventDefault();
+      pressed.add(k);
+      startMoveLoop();
+    }
 
     function onKeyUp(e: KeyboardEvent) {
       pressed.delete(e.key.toLowerCase());
@@ -863,18 +862,31 @@ const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
         // local radial up at current spot
         n.copy(camera.position).sub(CENTER).normalize();
 
-        // camera’s screen axes in world space
-        screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-        screenRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        // --- correct camera-space axes in world space ---
+        const viewFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion); // look dir
+        const viewRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);  // screen right
 
-        // project them onto the tangent plane (remove vertical component along n)
-        fwdT.copy(screenUp).addScaledVector(n, -screenUp.dot(n)).normalize();
-        rightT.copy(screenRight).addScaledVector(n, -screenRight.dot(n)).normalize();
+        // --- project them onto the local tangent plane (remove vertical along n) ---
+        function tangentProject(v: THREE.Vector3, up: THREE.Vector3, out: THREE.Vector3) {
+          // out = v - (v·up) up
+          return out.copy(v).addScaledVector(up, -v.dot(up));
+        }
 
-        // if fwdT got tiny (rare, e.g. extreme roll), fall back to right vector
-        if (fwdT.lengthSq() < 1e-8) {
+        tangentProject(viewFwd, n, fwdT);
+        tangentProject(viewRight, n, rightT);
+
+        // normalize & guard degeneracies
+        if (fwdT.lengthSq() < 1e-12) {
+          // if we're looking exactly radial, fall back to previous fwd or rebuild from right
           fwdT.copy(rightT);
-          rightT.crossVectors(fwdT, n).normalize();
+        }
+        fwdT.normalize();
+
+        if (rightT.lengthSq() < 1e-12) {
+          // rebuild right as tangent orthogonal to fwd
+          rightT.crossVectors(n, fwdT).normalize();
+        } else {
+          rightT.normalize();
         }
 
         // combine keys into tangent direction
@@ -903,37 +915,46 @@ const MOUSE_SENS = 0.002;           // radians per pixel (tune later)
         // altitude change (optional)
         if (radial !== 0) {
           const climb = (SURFACE_SPEED * 0.5) * dt * radial;
-          camera.position.add(n.clone().multiplyScalar(climb));
+          const newPos = camera.position.clone().add(n.clone().multiplyScalar(climb));
+
+          const R = newPos.length();              // new radius from center
+          const Rmin = 115;                       // set your min altitude (world units)
+          const Rmax = 500;                      // set your max altitude
+
+          // clamp radius and reproject onto that sphere
+          const Rclamped = THREE.MathUtils.clamp(R, Rmin, Rmax);
+          camera.position.copy(newPos.normalize().multiplyScalar(Rclamped));
+
           didMove = true;
         }
 
         if (didMove) {
-  // --- recompute local UP at the NEW position ---
-  n.copy(camera.position).sub(CENTER).normalize();
+          // --- recompute local UP at the NEW position ---
+          n.copy(camera.position).sub(CENTER).normalize();
 
-  // --- build local tangent frame (EAST/NORTH) at this spot ---
-  // pick a stable reference axis to cross with UP; swap near poles to avoid tiny cross products
-  if (Math.abs(n.y) > 0.99) {
-    refAxis.set(1, 0, 0);  // near poles, use world X as reference
-  } else {
-    refAxis.set(0, 1, 0);  // otherwise, use world Y as reference
-  }
-  east.crossVectors(refAxis, n).normalize();   // E = normalize(ref × U)
-  north.crossVectors(n, east).normalize();     // N = normalize(U × E)
+          // --- build local tangent frame (EAST/NORTH) at this spot ---
+          // pick a stable reference axis to cross with UP; swap near poles to avoid tiny cross products
+          if (Math.abs(n.y) > 0.99) {
+            refAxis.set(1, 0, 0);  // near poles, use world X as reference
+          } else {
+            refAxis.set(0, 1, 0);  // otherwise, use world Y as reference
+          }
+          east.crossVectors(refAxis, n).normalize();   // E = normalize(ref × U)
+          north.crossVectors(n, east).normalize();     // N = normalize(U × E)
 
 
-  // Rebuild view from the SAME yaw/pitch at the NEW position
-const { F, U_cam, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
-camera.up.copy(U_cam);
-  // 1) Apply orientation
-  camera.quaternion.copy(qCam);
+          // Rebuild view from the SAME yaw/pitch at the NEW position
+          const { F, U_cam, qCam } = previewCameraOrientationFromYawPitch(yaw, pitch);
+          camera.up.copy(U_cam);
+          // 1) Apply orientation
+          camera.quaternion.copy(qCam);
 
-  // 2) Sync OrbitControls to this new forward
-  controls.target.copy(camera.position).add(F);
+          // 2) Sync OrbitControls to this new forward
+          controls.target.copy(camera.position).add(F);
 
-  // 3) Kick the render/damping loop
-  startDampedRAF();
-}
+          // 3) Kick the render/damping loop
+          startDampedRAF();
+        }
 
 
         requestAnimationFrame(step);
@@ -980,10 +1001,10 @@ camera.up.copy(U_cam);
       controls.dispose();
 
       if (statsRef.current) {
-  const el = statsRef.current.dom;
-  if (el.parentElement) el.parentElement.removeChild(el);
-  statsRef.current = null;
-}
+        const el = statsRef.current.dom;
+        if (el.parentElement) el.parentElement.removeChild(el);
+        statsRef.current = null;
+      }
 
 
       window.removeEventListener('keydown', onKeyDown);
@@ -1036,15 +1057,15 @@ camera.up.copy(U_cam);
       if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
 
       // If still locked, release
-  if (document.pointerLockElement === elem) document.exitPointerLock();
+      if (document.pointerLockElement === elem) document.exitPointerLock();
 
-  elem.removeEventListener("click", onCanvasClick);
-  document.removeEventListener("pointerlockchange", onPointerLockChange);
-  document.removeEventListener("pointerlockerror", onPointerLockError);
-  window.removeEventListener("keydown", onReleaseKey);
-  // onMouseMove is removed by pointerlockchange when unlocked,
-  // but remove defensively anyway:
-  elem.removeEventListener("mousemove", onMouseMove);
+      elem.removeEventListener("click", onCanvasClick);
+      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("pointerlockerror", onPointerLockError);
+      window.removeEventListener("keydown", onReleaseKey);
+      // onMouseMove is removed by pointerlockchange when unlocked,
+      // but remove defensively anyway:
+      elem.removeEventListener("mousemove", onMouseMove);
     };
   }, []);
 
@@ -1322,7 +1343,7 @@ camera.up.copy(U_cam);
   const wind850On = useFeatureFlag<boolean>(FEAT.WIND_850, false);
 
   const landMaskOn = useFeatureFlag<boolean>(FEAT.LAND_MASK, false);
-  
+
   const temp250On = useFeatureFlag<boolean>(FEAT.TEMP_250, false);
   const temp500On = useFeatureFlag<boolean>(FEAT.TEMP_500, false);
   const temp850On = useFeatureFlag<boolean>(FEAT.TEMP_850, false);
@@ -1408,7 +1429,7 @@ camera.up.copy(U_cam);
           VERT={VERT}
           FRAG={FRAG}
           landTexture={landTexRef.current}
-          useLandMask={landMaskOn} 
+          useLandMask={landMaskOn}
           pressureLevel={250}
           exaggeration={exaggeration}
           zOffset={1.5}
@@ -1426,7 +1447,7 @@ camera.up.copy(U_cam);
           VERT={VERT}
           FRAG={FRAG}
           landTexture={landTexRef.current}
-          useLandMask={landMaskOn} 
+          useLandMask={landMaskOn}
           pressureLevel={500}
           exaggeration={exaggeration}
           zOffset={1.0}
@@ -1444,7 +1465,7 @@ camera.up.copy(U_cam);
           VERT={VERT}
           FRAG={FRAG}
           landTexture={landTexRef.current}
-          useLandMask={landMaskOn} 
+          useLandMask={landMaskOn}
           pressureLevel={850}
           exaggeration={exaggeration}
           zOffset={0.5}
@@ -1501,7 +1522,7 @@ camera.up.copy(U_cam);
       scene={sceneRef.current}
       camera={cameraRef.current}
       controls={controlsRef.current}
-      sun={sunRef.current}                                   
+      sun={sunRef.current}
       enabled={true}
       autoFrameOnce={true}
     />)}
@@ -1513,7 +1534,7 @@ camera.up.copy(U_cam);
       scene={sceneRef.current}
       camera={cameraRef.current}
       controls={controlsRef.current}
-      sun={sunRef.current}                                   
+      sun={sunRef.current}
       enabled={true}
       autoFrameOnce={true}
     />)}
@@ -1525,23 +1546,23 @@ camera.up.copy(U_cam);
       scene={sceneRef.current}
       camera={cameraRef.current}
       controls={controlsRef.current}
-      sun={sunRef.current}                                   
+      sun={sunRef.current}
       enabled={true}
       autoFrameOnce={true}
     />)}
 
     <TerrainSphereLayer
-        renderer={rendererRef.current}
-        scene={sceneRef.current}
-        camera={cameraRef.current}
-        baseRadius={100}
-        zOffset={10}
-        exaggeration={50.0}
-        enabled={true}
-        onReady={(mesh) => {
-          console.log("Terrain sphere ready:", mesh);
-        }}
-      />
+      renderer={rendererRef.current}
+      scene={sceneRef.current}
+      camera={cameraRef.current}
+      baseRadius={100}
+      zOffset={10}
+      exaggeration={50.0}
+      enabled={true}
+      onReady={(mesh) => {
+        console.log("Terrain sphere ready:", mesh);
+      }}
+    />
 
 
   </div>;

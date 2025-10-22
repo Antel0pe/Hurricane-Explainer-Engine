@@ -57,15 +57,8 @@ ways to make wind particles better
 
 future ideas:
 - waves
-- clouds
-    - currently have them as 2d layers
-    - need to make them actually 3d now
 - vertical air particle motion -- although would this conflict with air particles z values being determined by gph currently. 
     - answer is depending on which variable i get. if i look at the rising/sinking nature of air at a certain pressure level that is equivalent to gph since that tells me how air is rising and sinking at a given pressure level. if i look at variables that tell me absolutely rising/sinking nature then it's different and will generally line up with gph in quiet flows but in things like hurricanes will not line up with gph ie. not stay at a single pressure level
-- integrate with globegl or turn it into a globe rather than rectangle
-    - need to disable stretch in this line
-    - // WHEN MOVING TO GLOBE RATHER THAN RECTANGLE, REMOVE COSPHI
-    - float du = (dlon_deg / 360.0) * cosphi;
 - color particles by temperature. this would help with telling what altitude particles are on
 - make shaders not components so moving to next hour animation is better
 - increase resolution of mesh, wind, etc
@@ -79,7 +72,6 @@ future ideas:
 - use nasa worldview satellite/other satellite images as sources for data?
     - might be better to pull underlying data if possible rather than satellite
 - finer resolution like hrrr
-- temperature as 3d mesh
 - tweakpane working with things like wind particle resolution -- UV_POINTS_STEP
 - modify shaders to get more tweak pane uniforms
 - actually implement vertical wind motion according to era5
@@ -87,9 +79,7 @@ future ideas:
 - fix up the components such that when you switch the time, it doesnt erase everything on screen and render a new thing. basically properly update uniforms when a mat has already been created.
 - create google maps like drag person and place on ground and it automatically sets you at ground height with correct pitch where you drag it
 - lod as you zoom in and out
-- add 3d stuff on the surface like mapbox 3d tiles
 - add speed toggle for controls and perhaps have small map overlay that shows where they are
-- prevent altitude from going into the earth
 - make sure exampleData and data are consistent
 - star background in scene behind earth 
 - make clouds move with wind and get reset to intial starting position too
@@ -97,13 +87,13 @@ future ideas:
 - sync up wind particles + trail height code
 - add lighting shaders to new globe
 - opacity for clouds based on rain content etc
-- remove second three globe
-- make controls move smoothly at poles
-- looking up at clouds from ground and pressing w makes you go backwards?
-- going forwards makes you drift towards poles?
-- dont let users go below the globe
 - clouds
-  - make the code simpler more performant
-  - tune the view a little bit
-  - implemenet it for different pressure levels
-  - see if you can see from the inside of cloud a little better
+    - improving 3d height view from the ground. suspect it's lighting allowing to see the sky above or lighter/darker compared portions of the same cloud?
+    - making clouds darker/lighter based on cloud and lighting
+- icebergs, sea ice cover?
+- upsample era5 fields somehow
+- make a rectangular map overlay bottom left showing where in the world you are
+- make controls move smoothly at poles
+- move wind particles + trails out of the ground with correct zoffset
+    - reset wind particle height when gph isnt enabled after it was once. 
+    - figure out how to not make zoffset apply or smaller one apply when gph is enabled since we want the particles to mostly stay on gph but without it stay off the ground

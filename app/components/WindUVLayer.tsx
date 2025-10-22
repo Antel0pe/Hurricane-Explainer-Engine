@@ -182,7 +182,6 @@ export default function WindUvLayer({
               uGridW: { value: texW },
               uGridH: { value: texH },
               uStep: { value: UV_POINTS_STEP },
-              uAboveTerrain: { value: 0.1 },
               uCurrentPosition: { value: rtRead.texture },
               uSimSize: { value: new THREE.Vector2(outW, outH) },
               uPressure: { value: pressureLevel },
@@ -207,18 +206,11 @@ export default function WindUvLayer({
       max: 20,
       step: 0.1,
     },
-    AboveTerrain: {
-      type: "number",
-      uniform: "uAboveTerrain",
-      min: -2,
-      max: 2,
-      step: 0.01,
-    },
     Z_Offset: {
       type: "number",
       uniform: "zOffset",
       min: -2,
-      max: 2,
+      max: 20,
       step: 0.01,
     },
   },
@@ -381,7 +373,6 @@ export default function WindUvLayer({
               uGridW: { value: texW },
               uGridH: { value: texH },
               uStep: { value: UV_POINTS_STEP },
-              uAboveTerrain: { value: 0.1 },
               uCurrentPosition: { value: readPositionRTRef.current!.texture },
               uSimSize: { value: new THREE.Vector2(outW, outH) },
               uPressure: { value: pressureLevel },
@@ -534,7 +525,6 @@ export default function WindUvLayer({
           mat.uniforms.uGridW.value = texW;
           mat.uniforms.uGridH.value = texH;
           mat.uniforms.uStep.value = 10;
-          mat.uniforms.uAboveTerrain.value = 0.01;
           mat.uniforms.zOffset.value = defaultZOffsetForPressure(pressureLevel);
 
           if (dimsChanged) {
