@@ -509,17 +509,6 @@ uniform float uRBase;          // inner radius (world units)
 uniform float uRTop;           // outer radius (world units)
 uniform float uWorldToKm;      // world->km (e.g., 0.001 if world = meters; 1.0 if world = km)
 
-uniform float uNoiseL0Km;      // base wavelength (km), e.g., 1.2
-uniform float uNoiseL1Km;      // 2nd octave (km), e.g., 0.4
-uniform float uNoiseL2Km;      // 3rd octave (km), e.g., 0.15
-uniform float uNoiseAmp0;      // weights for octaves, e.g., 1.0
-uniform float uNoiseAmp1;      // e.g., 0.6
-uniform float uNoiseAmp2;      // e.g., 0.35
-
-uniform float uVertSquash;     // vertical squash (0.3–0.9), e.g., 0.6
-uniform float uClumpLKm;       // low-freq clump wavelength (km), e.g., 8.0
-uniform float uClumpAmp;       // mix factor for clump (0–1), e.g., 0.5
-
 uniform float uDensityGain;    // overall gain, e.g., 1.0
 uniform float uSeed;           // randomization seed, e.g., 13.0
 
@@ -530,44 +519,20 @@ uniform float uEps;           // base feather for smoothstep threshold (e.g., 0.
 uniform float uLonOffset;     // same as your worldToUV
 uniform bool  uFlipV;         // same as your worldToUV
 
-// jitter to avoid banding/popping at coverage edges:
-uniform float uFeatherJitterAmp;  // 0..0.03 (try 0.01)
-uniform float uJitterCellKm;      // km size for stable jitter cells (e.g., 8.0)
-
-uniform int   uNumSteps;     // e.g., 8 (start here)
 uniform float uSigmaT;       // extinction scale (try 1.5 .. 4.0)
-uniform float uJitterAmp;    // 0..1 start-jitter fraction (try 0.3)
-uniform vec3  uCloudColor;   // cloud tint (e.g., vec3(1.0))
 
-uniform float uCovCellDeg;       // ERA5 grid size in degrees (e.g. 0.25)
 uniform float uWalkAmpDeg;       // max angular random-walk at top (deg), ~0.2–0.6
 uniform float uWalkFreq;         // walk frequency (units of “per shell thickness”), ~3–7
-uniform float uWalkOctaves;      // 1–4 (how wiggly the walk is)
-uniform float uGateNoiseLKm;     // km wavelength for 3D threshold noise, ~60–200
-uniform float uGateNoiseAmp;     // threshold mod amplitude, 0–0.25 (start 0.12)
-uniform float uTopSpreadDeg;     // tiny soft spread at high t (deg), 0–0.25
 
-uniform float uNoiseWalkKm;    // km wander of density basis top-to-bottom (start 60.0)
 uniform float uTwistDegMax;    // max rotation of density basis around radial axis (start 14.0)
 
 uniform float uCloudBrightness;
-uniform float cloudExtinctionMode;
-uniform float debugMode;
-uniform float uMinDT;
-
-// === DEBUG + SEED CONTROL ===
-uniform int  uDebugStage;   // 0=full march, 1=cov (nearest), 2=cov (manual bilinear),
-                            // 3=cov (3x3 box), 4=carrier L, 5=gate-only (mask q),
-                            // 6=density-only, 7=seed map
-uniform int  uSeedMode;     // 0=cell-seeded (current), 1=continuous UV-seeded
 
 // --- Adaptive marching controls ---
 uniform float uMaxTStep;          // target max change in shell-height per sample, e.g. 0.02
 uniform int   uMinStepsAdaptive;  // floor, e.g. 8
 uniform int   uMaxStepsAdaptive;  // cap, e.g. 96
 uniform float uMaxStepKm;         // optional physical cap (km per sample), e.g. 2.0 (use <=0 to disable)
-
-
 
 in vec3 vWorld;   
 out vec4 fragColor;        
@@ -611,39 +576,6 @@ float hash13(vec3 p){
     return fract(p.x * p.y * p.z);
 }
 
-vec3 fade3(vec3 t){ return t*t*t*(t*(t*6.0-15.0)+10.0); }
-
-// value noise (tile-free, cheap)
-float valueNoise3D(vec3 p){
-    vec3 i = floor(p);
-    vec3 f = fract(p);
-    vec3 u = fade3(f);
-
-    float n000 = hash13(i + vec3(0,0,0));
-    float n100 = hash13(i + vec3(1,0,0));
-    float n010 = hash13(i + vec3(0,1,0));
-    float n110 = hash13(i + vec3(1,1,0));
-    float n001 = hash13(i + vec3(0,0,1));
-    float n101 = hash13(i + vec3(1,0,1));
-    float n011 = hash13(i + vec3(0,1,1));
-    float n111 = hash13(i + vec3(1,1,1));
-
-    float nx00 = mix(n000, n100, u.x);
-    float nx10 = mix(n010, n110, u.x);
-    float nx01 = mix(n001, n101, u.x);
-    float nx11 = mix(n011, n111, u.x);
-
-    float nxy0 = mix(nx00, nx10, u.y);
-    float nxy1 = mix(nx01, nx11, u.y);
-
-    return mix(nxy0, nxy1, u.z); // [0,1]
-}
-
-// remap [0,1] -> [-1,1] then soft contrast
-float normNoise(vec3 p){
-    return (valueNoise3D(p) * 2.0 - 1.0);
-}
-
 // ---------- vertical profile inside the shell ----------
 float shellT01(vec3 worldPos, float rBase, float rTop){
     float r = length(worldPos);
@@ -657,38 +589,6 @@ float bell01(float t){
     return a * b * 4.0; // peaks ~1 in the middle
 }
 
-// ---------- FBM with vertical anisotropy ----------
-float fbmAniso(vec3 w_km,
-               float L0, float L1, float L2,
-               float A0, float A1, float A2,
-               float vertSquash)
-{
-    // squash vertical for “flatter” clouds
-    vec3 q0 = w_km / max(1e-6, L0); q0.y *= vertSquash;
-    vec3 q1 = w_km / max(1e-6, L1); q1.y *= vertSquash;
-    vec3 q2 = w_km / max(1e-6, L2); q2.y *= vertSquash;
-
-    float n0 = normNoise(q0);
-    float n1 = normNoise(q1);
-    float n2 = normNoise(q2);
-
-    // mild shaping to keep energy centered
-    n0 = tanh(n0 * 1.2);
-    n1 = tanh(n1 * 1.2);
-    n2 = tanh(n2 * 1.2);
-
-    return A0*n0 + A1*n1 + A2*n2; // can be negative
-}
-
-// ---------- coarse clump octave (very low frequency) ----------
-float clumpMask(vec3 w_km, float Lclump){
-    vec3 q = w_km / max(1e-6, Lclump);
-    // map noise to [0,1], sharpen to form blobs
-    float c = valueNoise3D(q);
-    c = smoothstep(0.35, 0.75, c);
-    return c; // [0,1]
-}
-
 // ---------- world → ERA5 UV (equirect) ----------
 vec2 worldToUV(vec3 p){
   vec3 n = normalize(p);
@@ -700,225 +600,11 @@ vec2 worldToUV(vec3 p){
   return vec2(u, v);
 }
 
-// ----- coverage sampling helpers -----
-float covNearest(vec2 uv){ return texture(uCov, uv).r; }
-
-float covBilinear(vec2 uv){
-  ivec2 sz = textureSize(uCov, 0);
-  vec2 texel = 1.0 / vec2(sz);
-
-  // sample center-relative to do our own bilinear (independent of texture filters)
-  vec2 uv_px  = uv * vec2(sz) - 0.5;
-  vec2 f      = fract(uv_px);
-  ivec2 i0    = ivec2(floor(uv_px));
-  vec2 uv00   = (vec2(i0) + 0.5) / vec2(sz);
-
-  float c00 = texture(uCov, uv00).r;
-  float c10 = texture(uCov, uv00 + vec2(texel.x, 0.0)).r;
-  float c01 = texture(uCov, uv00 + vec2(0.0, texel.y)).r;
-  float c11 = texture(uCov, uv00 + texel).r;
-
-  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
-}
-
-float covBox3(vec2 uv){
-  vec2 texel = 1.0 / vec2(textureSize(uCov, 0));
-  float s = 0.0;
-  for (int dy = -1; dy <= 1; ++dy)
-  for (int dx = -1; dx <= 1; ++dx){
-    s += texture(uCov, uv + vec2(dx,dy)*texel).r;
-  }
-  return s / 9.0;
-}
 // Continuous vs cell-anchored seed (the latter creates grid-aligned jumps)
-float columnSeed_custom(vec2 uv){
-  if (uSeedMode == 0){
-    // --- original, discontinuous at every ERA5 cell boundary ---
-    vec2 cell = floor(uv * vec2(360.0, 180.0) / max(uCovCellDeg, 1e-6));
-    return hash12(cell);
-  } else {
-    // --- continuous in UV: no jumps across cell borders ---
-    // (hash on fractional uv grid; large freq so columns vary but continuously)
-    return hash12(fract(uv * vec2(4096.0, 4096.0)));
-  }
-}
-
-
-// stable per-column seed from ERA5 cell id:
 float columnSeed(vec2 uv){
-  vec2 cell = floor(uv * vec2(360.0, 180.0) / max(uCovCellDeg, 1e-6));
-  return hash12(cell);
+    // --- continuous in UV: no jumps across cell borders ---
+    return hash12(fract(uv * vec2(4096.0, 4096.0)));
 }
-
-// rotate vector v around unit axis by angle (radians)
-vec3 rotateAroundAxis(vec3 v, vec3 axis, float ang){
-  float c = cos(ang), s = sin(ang);
-  return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
-}
-
-// world-anchored density with height-dependent basis walk + twist
-float densityWorldTwisted(vec3 worldPos){
-  // normalized shell height
-  float t = shellT01(worldPos, uRBase, uRTop);
-
-  // per-column stable seed
-  vec2 uv    = worldToUV(worldPos);
-  float seed = columnSeed_custom(uv);
-
-  // random walk in km across height (same idea you used for gate but for density coords)
-  float f1 = fbm1D(t * uWalkFreq + seed*1.7, uWalkOctaves);
-  float f2 = fbm1D(t * (uWalkFreq*0.83) + seed*3.1, uWalkOctaves);
-  float f3 = fbm1D(t * (uWalkFreq*1.27) + seed*4.9, uWalkOctaves);
-
-  vec3 walkKm = (vec3(f1, f2, f3) - 0.5) * 2.0 * uNoiseWalkKm * smoothstep(0.0, 1.0, t);
-
-  // twist density basis around radial axis with height
-  vec3 axis   = normalize(worldPos);
-  float twist = radians(uTwistDegMax) * (hash12(uv*37.0) - 0.5) * 2.0 * t;
-
-  // build sampling coord in km, then rotate
-  vec3 w_km = worldPos * uWorldToKm + walkKm;
-  w_km      = rotateAroundAxis(w_km, axis, twist);
-
-  // now your existing anisotropic FBM with vertical squash
-  float d = fbmAniso(
-    w_km,
-    uNoiseL0Km, uNoiseL1Km, uNoiseL2Km,
-    uNoiseAmp0, uNoiseAmp1, uNoiseAmp2,
-    uVertSquash
-  );
-
-  float d01 = clamp(0.5 + 0.5 * d, 0.0, 1.0);
-
-  // same clumping + vertical bell as before
-  float t01 = t;
-  float vp  = bell01(t01);
-  float C   = mix(1.0, clumpMask(w_km, uClumpLKm), clamp(uClumpAmp, 0.0, 1.0));
-
-  return d01 * C * vp * uDensityGain;
-}
-
-// ERA5 gate with height decorrelation + threshold modulation + soft top spread
-float era5Gate3DColumn(vec3 worldPos){
-  // column params
-  float t = shellT01(worldPos, uRBase, uRTop);     // 0 (base) → 1 (top)
-  vec2  uv = worldToUV(worldPos);
-
-  // --- (1) height-dependent random walk offset (no single tilt) ---
-  // Use the ERA5 grid cell as a stable seed per column
-  float cellDeg = max(uCovCellDeg, 1e-6);
-  vec2  cellId  = floor(uv * vec2(360.0, 180.0) / cellDeg);
-  float seed    = hash12(cellId);
-
-  // Walk angle & radius profiles (world-locked)
-  float thetaX  = 6.2831853 * fbm1D(t * uWalkFreq + seed*3.1, uWalkOctaves);
-  float thetaY  = 6.2831853 * fbm1D(t * (uWalkFreq*0.73) + seed*5.7, uWalkOctaves);
-  float ampRad  = radians(uWalkAmpDeg) * smoothstep(0.0, 1.0, t); // grows with height
-
-  // Map two angles to small lon/lat deflections (not just one axis)
-  float dLon = ampRad * (0.6 * sin(thetaX) + 0.4 * sin(thetaY*1.7 + 1.3));
-  float dLat = ampRad * (0.6 * cos(thetaY) + 0.4 * cos(thetaX*1.4 - 0.7));
-
-  vec2 uvWalk = uv + dLatLon_to_dUV(dLat, dLon, uFlipV);
-  uvWalk = fract(uvWalk);
-
-  // --- (2) sample base coverage + optional tiny top spread (soft max) ---
-  float cov0 = texture(uCov, uvWalk).r;
-
-  float bleed = smoothstep(0.45, 1.0, t); // spread only in upper half
-  float dA    = radians(uTopSpreadDeg) * bleed;
-  vec2  dU    = dLatLon_to_dUV(0.0, dA, uFlipV);
-  vec2  dV    = dLatLon_to_dUV(dA, 0.0, uFlipV);
-
-  float c1 = texture(uCov, fract(uvWalk + dU )).r;
-  float c2 = texture(uCov, fract(uvWalk - dU )).r;
-  float c3 = texture(uCov, fract(uvWalk + dV )).r;
-  float c4 = texture(uCov, fract(uvWalk - dV )).r;
-
-  float cov = mix(cov0, max(max(c1,c2), max(c3,c4)), bleed * 0.5);
-
-  // --- (3) threshold modulation with true 3D noise (breaks slice cloning) ---
-  vec3 w_km = worldPos * uWorldToKm;
-  float n3  = normNoise(w_km / max(1e-6, uGateNoiseLKm));   // [-1,1]
-  float L   = texture(uLook, uvWalk).r;
-
-  // Move the quantile threshold a bit with height & 3D noise
-  float qBase = 1.0 - cov;
-  float q     = clamp(qBase + n3 * uGateNoiseAmp * (0.35 + 0.65*t), 0.0, 1.0);
-
-  // stable per-cell feather jitter
-  vec3 cell3 = floor(worldPos * uWorldToKm / 8.0); // 8 km cells; tune if needed
-  float j    = (hash13(cell3) - 0.5) * 2.0;
-  float eps  = uEps + uFeatherJitterAmp * j;
-
-  float mask = smoothstep(q - eps, q + eps, L);
-
-  // final soft gate (floor + masked)
-  // return  covBox3(uvWalk + dU);
-  return mix(cov, mask * cov, clamp(uK, 0.0, 1.0));
-}
-
-// --- place near top of the file (helpers) ---
-// March-aligned ERA5 prefilter: average cov along the segment [t - 0.5*dt, t + 0.5*dt]
-float covLinePrefilter(vec3 ro, vec3 rd, float t, float dt, bool useWalk){
-  // segment endpoints in world, their UVs
-  vec3 pA = ro + (t - 0.5*dt) * rd;
-  vec3 pB = ro + (t + 0.5*dt) * rd;
-
-  vec2 uvA = worldToUV(pA);
-  vec2 uvB = worldToUV(pB);
-
-  // OPTIONAL: reuse your height walk (keeps look consistent) — cheap version
-  if (useWalk){
-    float ta = shellT01(pA, uRBase, uRTop);
-    float tb = shellT01(pB, uRBase, uRTop);
-    // very small walk from your existing formula; we don't need exact copy
-    float ampA = radians(uWalkAmpDeg) * ta;
-    float ampB = radians(uWalkAmpDeg) * tb;
-    uvA += dLatLon_to_dUV( ampA*0.2, ampA*0.2, uFlipV );
-    uvB += dLatLon_to_dUV( ampB*0.2, ampB*0.2, uFlipV );
-    uvA = fract(uvA); uvB = fract(uvB);
-  }
-
-  // how many texels long is this footprint? choose taps accordingly
-  vec2 texel = 1.0 / vec2(textureSize(uCov, 0));
-  float lenTex = length((uvB - uvA) / texel);
-  int N = int(clamp(floor(lenTex) + 1.0, 3.0, 9.0)); // 3..9 taps
-
-  float wsum = 0.0, acc = 0.0;
-  for (int i=0; i<16; ++i){
-    if (i >= N) break;
-    float a = (float(i) + 0.5) / float(N);     // 0..1 along the segment
-    vec2  uv = fract(mix(uvA, uvB, a));
-    float w  = 1.0;                            // box weights are fine here
-    acc  += w * texture(uCov, uv).r;
-    wsum += w;
-  }
-  return acc / max(wsum, 1e-6);
-}
-
-// --- replace your whole era5Gate3DColumn with this simplified version ---
-float era5Gate3DColumn_simplified(vec3 ro, vec3 rd, float t, float dt){
-  // 1) coverage along the *segment* this step sees
-  float cov = covLinePrefilter(ro, rd, t, dt, true);  // true = tiny walked variant
-
-  // 2) small 3D threshold modulation (keeps vertical variation but mild)
-  vec3  p    = ro + t*rd;
-  float n3   = normNoise((p * uWorldToKm) / max(1e-6, uGateNoiseLKm));   // [-1,1]
-  float L    = texture(uLook, worldToUV(p)).r;
-
-  float qBase = 1.0 - cov;
-  float q     = clamp(qBase + n3 * (uGateNoiseAmp * 0.6), 0.0, 1.0);     // toned down
-
-  // 3) feather without per-cell jitter (we removed that cause of seams already)
-  float eps  = uEps;                           // keep your UI control
-  float mask = smoothstep(q - eps, q + eps, L);
-
-  // 4) final soft gate
-  return mix(cov, mask * cov, clamp(uK, 0.0, 1.0));
-}
-
-
 
 bool intersectSphere(vec3 ro, vec3 rd, float R, out float tEnter, out float tExit){
   // Solve |ro + t rd|^2 = R^2
@@ -966,30 +652,25 @@ bool shellSegment(vec3 ro, vec3 rd, float Rbase, float Rtop, out float t0, out f
 struct CloudCtx {
   vec2  uv;        // base equirect UV at p
   float t;         // shell height 0..1
-  vec3  axis;      // radial axis at p
   float seed;      // stable per-column seed
-  vec3  wkm;       // world km coords with walk+twist applied
   vec2  uvWalk;    // UV after height random-walk (for coverage)
-  float gateN;     // [-1,1] cheap height decorrelator for gate
   float epsJit;    // feather jitter
 };
-
 
 CloudCtx makeCloudCtx(vec3 p){
   CloudCtx c;
 
   c.uv   = worldToUV(p);
   c.t    = shellT01(p, uRBase, uRTop);
-  c.axis = normalize(p);
 
   // per-column seed (ERA5 cell id)
-  vec2 cell = floor(c.uv * vec2(360.0, 180.0) / max(uCovCellDeg, 1e-6));
-  c.seed = columnSeed_custom(c.uv);
+  vec2 cell = floor(c.uv * vec2(360.0, 180.0) / 1e-6);
+  c.seed = columnSeed(c.uv);
 
   // --- height-dependent random walk for BOTH gate + density (no trig) ---
-  float fx = fbm1D(c.t * uWalkFreq        + c.seed*3.1, uWalkOctaves); // [0,1]
-  float fy = fbm1D(c.t * (uWalkFreq*0.73) + c.seed*5.7, uWalkOctaves); // [0,1]
-  float fz = fbm1D(c.t * (uWalkFreq*1.27) + c.seed*4.9, uWalkOctaves); // [0,1]
+  float fx = fbm1D(c.t * uWalkFreq        + c.seed*3.1, 1.0); // [0,1]
+  float fy = fbm1D(c.t * (uWalkFreq*0.73) + c.seed*5.7, 1.0); // [0,1]
+  float fz = fbm1D(c.t * (uWalkFreq*1.27) + c.seed*4.9, 1.0); // [0,1]
 
   // coverage UV walk (angles→small lon/lat deflections without sin/cos)
   float ampRad = radians(uWalkAmpDeg) * c.t;      // grows with height
@@ -998,67 +679,35 @@ CloudCtx makeCloudCtx(vec3 p){
   c.uvWalk     = fract(c.uv + dLatLon_to_dUV(dLat, dLon, uFlipV));
 
   // density basis random walk in km
-  vec3 walkKm = (vec3(fx, fy, fz) - 0.5) * 2.0 * uNoiseWalkKm * c.t;
+  vec3 walkKm = vec3(0.0);
 
-  // small-angle twist (linearized, no sin/cos)
-  float ang = radians(uTwistDegMax) * (hash12(c.uv*37.0) - 0.5) * 2.0 * c.t;
   vec3  wkm = p * uWorldToKm + walkKm;
-       wkm += cross(c.axis, wkm) * ang;           // linear rotation
-  c.wkm = wkm;
 
   // cheap per-height decorrelator for gate (replaces 3D noise)
   vec3 cell3 = floor(p * uWorldToKm / 8.0);       // 8 km cells
-  c.gateN    = hash13(cell3) * 2.0 - 1.0;         // [-1,1]
 
   // feather jitter reusing same cell
-  c.epsJit   = uEps + uFeatherJitterAmp * (hash13(cell3) * 2.0 - 1.0);
+  c.epsJit   = uEps;
 
   return c;
 }
 
-
-
 float densityWorldTwisted_ctx(in CloudCtx c){
-  // FBM (unchanged look)
-  float d = fbmAniso(
-    c.wkm,
-    uNoiseL0Km, uNoiseL1Km, uNoiseL2Km,
-    uNoiseAmp0, uNoiseAmp1, uNoiseAmp2,
-    uVertSquash
-  );
-
-  float d01 = clamp(0.5 + 0.5 * d, 0.0, 1.0);
-
-  // clumps (optional – keep if you see the impact)
-  float C = mix(1.0, clumpMask(c.wkm, uClumpLKm), clamp(uClumpAmp, 0.0, 1.0));
-
   // vertical profile
   float vp = bell01(c.t);
-
-  return d01 * C * vp * uDensityGain;
+  return 0.5 * vp * uDensityGain;
 }
+
 float era5Gate3DColumn_ctx(in CloudCtx c){
   // base coverage at walked UV
-  float cov0 = texture(uCov, c.uvWalk).r;
-
-  // OPTIONAL anvil spread (comment out to save 4 tex reads)
-  float cov = cov0;
-  // float bleed = smoothstep(0.45, 1.0, c.t);
-  // float dA    = radians(uTopSpreadDeg) * bleed;
-  // vec2  dU    = dLatLon_to_dUV(0.0, dA, uFlipV);
-  // vec2  dV    = dLatLon_to_dUV(dA, 0.0, uFlipV);
-  // float c1 = texture(uCov, fract(c.uvWalk + dU )).r;
-  // float c2 = texture(uCov, fract(c.uvWalk - dU )).r;
-  // float c3 = texture(uCov, fract(c.uvWalk + dV )).r;
-  // float c4 = texture(uCov, fract(c.uvWalk - dV )).r;
-  // cov = mix(cov0, max(max(c1,c2), max(c3,c4)), bleed * 0.5);
+  float cov = texture(uCov, c.uvWalk).r;
 
   // correlated carrier
   float L = texture(uLook, c.uvWalk).r;
 
   // quantile threshold with cheap height decorrelation
   float qBase = 1.0 - cov;
-  float q     = clamp(qBase + c.gateN * uGateNoiseAmp * (0.35 + 0.65*c.t), 0.0, 1.0);
+  float q     = clamp(qBase, 0.0, 1.0);
 
   // stochastic mask with feather
   float mask = smoothstep(q - c.epsJit, q + c.epsJit, L);
@@ -1068,21 +717,10 @@ float era5Gate3DColumn_ctx(in CloudCtx c){
 }
 
 float cloudExtinction(vec3 p){
-if (cloudExtinctionMode == 1.0){
   CloudCtx c = makeCloudCtx(p);                   // shared once
   float rho  = densityWorldTwisted_ctx(c) * era5Gate3DColumn_ctx(c);
   return rho * uSigmaT;
-} else {
-    float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
-    return rho * uSigmaT;
-    
-  }
 }
-
-// float cloudExtinction(vec3 p){
-//   float rho = densityWorldTwisted(p) * era5Gate3DColumn(p);  // ← new gate
-//   return rho * uSigmaT;
-// }
 
 // Adaptive steps based on vertical (radial) resolution and an optional km spacing cap
 int adaptiveStepCount(vec3 ro, vec3 rd, float t0, float t1){
@@ -1100,7 +738,6 @@ int adaptiveStepCount(vec3 ro, vec3 rd, float t0, float t1){
   // Steps to keep per-sample Δt ≤ uMaxTStep
   float stepsT = (uMaxTStep > 0.0) ? ceil(tSpan / uMaxTStep) : 0.0;
 
-  // Optional: cap world spacing in km
   float stepsKm = 0.0;
   if (uMaxStepKm > 0.0 && uWorldToKm > 0.0){
     float segKm = segLen * uWorldToKm;
@@ -1117,56 +754,27 @@ int adaptiveStepCount(vec3 ro, vec3 rd, float t0, float t1){
   return max(1, steps);
 }
 
-
 vec4 marchClouds(vec3 ro, vec3 rd){
   float t0, t1;
   if (!shellSegment(ro, rd, uRBase, uRTop, t0, t1)) {
     return vec4(0.0); // miss: fully transparent
   }
 
-  // float segLen   = t1 - t0;
-  // int   steps    = max(1, uNumSteps);
-  // float dt       = min(uMinDT, segLen / float(steps));
     float segLen   = t1 - t0;
   int   steps    = adaptiveStepCount(ro, rd, t0, t1);
-
-  // Choose dt from adaptive steps, while honoring your existing dt ceiling uMinDT
-  float dtCandidate = segLen / float(steps);
-  float dt          = (uMinDT > 0.0) ? min(uMinDT, dtCandidate) : dtCandidate;
-
-
+  float dt          = segLen / float(steps);
 
   // world-locked jitter on the start to hide banding
   // build a stable cell from the first sample point
   vec3 p0  = ro + t0 * rd;
-  float cellScale = (uWorldToKm > 0.0) ? (uJitterCellKm / uWorldToKm) : 1.0;
-  float j = hash13(floor(p0 / max(1e-6, cellScale))) * 2.0 - 1.0;
+  float j = hash13(floor(p0 / 1e-6)) * 2.0 - 1.0;
 
-  float t  = t0 + (0.5 + 0.5 * uJitterAmp * j) * dt;
+  float t  = t0 + (0.5 + 0.5 * j) * dt;
   float accA   = 0.0;
 
   for (int i = 0; i < 128; ++i) { // compile-time cap
     if (i >= steps) break;
     vec3 p = ro + t * rd;
-
-//     // --- place inside march loop (for diagnosis only) ---
-// float rho0 = densityWorldTwisted(p);
-// float rho1 = densityWorldTwisted(ro + (t + dt) * rd);
-// float g0   = era5Gate3DColumn(p);
-// float g1   = era5Gate3DColumn(ro + (t + dt) * rd);
-
-// // central diffs (magnitude only)
-// float dRho = abs(rho1 - rho0);
-// float dG   = abs(g1   - g0);
-
-// // color-code the “fastest” contributor this step:
-// // red = gate dominates, green = density dominates, black = calm
-// vec3 viz = vec3(0.0);
-// if (dG > dRho) viz.r = smoothstep(0.02, 0.15, dG);     // tune thresholds
-// else            viz.g = smoothstep(0.02, 0.15, dRho);
-
-// return vec4(viz, 1.0);
-
 
     float sigma = cloudExtinction(p);         // extinction at sample
     float aStep = 1.0 - exp(-sigma * dt);     // alpha this step (Beer–Lambert)
@@ -1182,18 +790,7 @@ vec4 marchClouds(vec3 ro, vec3 rd){
   }
 
   vec3 col = vec3(accA * uCloudBrightness); 
-  if (debugMode == 1.0){
   return vec4(col, accA);
-  } else {
-  vec3 pmid = ro + (t0 + 0.5*(t1 - t0)) * rd;
-  vec2 uv   = worldToUV(pmid);
-  float cov = texture(uCov, uv).r;
-  return vec4(vec3(cov), 1.0);
-
-    }
-
-
-
 }
 
 void main(){
@@ -1202,12 +799,8 @@ void main(){
 
   vec4 cloud = marchClouds(ro, rd);
 
-  // For now just show alpha as brightness so you can tune steps/scale.
-  // Replace with proper lighting later.
-  vec3 view = mix(vec3(0.0), cloud.rgb, 1.0); // or just vec3(cloud.a)
-  fragColor = vec4(view, cloud.a);
+  fragColor = cloud;
 }
-
 `
 
 
@@ -1365,44 +958,18 @@ const drawH = Math.round(size.y * dpr);
       uRBase:   { value: rBaseRef.current },
       uRTop:    { value: rTopRef.current },
       uWorldToKm: { value: 6371/173 },
-      uVertSquash: { value: 0.0 },
-      uNoiseL0Km: { value: 0.0 },
-      uNoiseAmp0: { value: 0 },
-      uNoiseL1Km: { value: 0 },
-      uNoiseAmp1: { value: 0 },
-      uNoiseL2Km: { value: 0 },
-      uNoiseAmp2: { value: 0 },
-      uClumpLKm: { value: 0 },
-      uClumpAmp: { value: 0.0 },
       uDensityGain: { value: 1.0 },
       uSeed: { value: 4 },
-      uFeatherJitterAmp: { value: 0.0 },
-      uJitterCellKm: { value: 0.0 },
       uLook:     { value: lookTexRef.current },
       uCov:      { value: singleChannelRawEra5 },
       uEps:      { value: 0.6 },
       uLonOffset:{ value: 0.25 },
       uFlipV:    { value: true },
       uK:        { value: 0.4 },
-      uNumSteps: { value: 4 },
       uSigmaT: { value: 2.0 },
-      uJitterAmp: { value: 1.0 },
-      uCloudColor: { value: new THREE.Vector3(0.97, 0.96, 0.94) },
-      uCovCellDeg: { value: 0 },
       uWalkAmpDeg: { value: 1.0 },
       uWalkFreq: { value: 10.0 },
-      uWalkOctaves: { value: 1.0 },
-      uGateNoiseLKm: { value: 0.0 },
-      uGateNoiseAmp: { value: 0.0 },
-      uTopSpreadDeg: { value: 0 },
-      uNoiseWalkKm: { value: 0.0 },
-      uTwistDegMax: { value: 0.0 },
       uCloudBrightness: { value: 0.9 },
-      cloudExtinctionMode: { value: 1 },
-      debugMode: { value: 1 }, 
-      uMinDT: { value: 15 },
-      uDebugStage: { value: 0 },
-      uSeedMode: { value: 0 },
       uMaxTStep: { value: 1.3 },
       uMinStepsAdaptive: { value: 4 },
       uMaxStepsAdaptive: { value: 12 },
@@ -1419,39 +986,14 @@ const drawH = Math.round(size.y * dpr);
       uMinStepsAdaptive: { type: "number", uniform: "uMinStepsAdaptive", min: 0, max: 100, step: 1 },
       uMaxStepsAdaptive: { type: "number", uniform: "uMaxStepsAdaptive", min: 0, max: 250, step: 1 },
       uMaxStepKm: { type: "number", uniform: "uMaxStepKm", min: 0, max: 100, step: 1 },
-      uDebugStage: { type: "number", uniform: "uDebugStage", min: 0, max: 7, step: 1 },
-      uSeedMode: { type: "number", uniform: "uSeedMode", min: 0, max: 1, step: 1 },
-                  uMinDT: { type: "number", uniform: "uMinDT", min: 0, max: 10, step: 0.01 },
-            debugMode: { type: "number", uniform: "debugMode", min: 0, max: 5, step: 1 },
-      cloudExtinctionMode: { type: "number", uniform: "cloudExtinctionMode", min: 0, max: 1, step: 1 },
 uWorldToKm: { type: "number", uniform: "uWorldToKm", min: 0, max: 100, step: 0.01 },
-uVertSquash: { type: "number", uniform: "uVertSquash", min: 0, max: 200, step: 0.01 },
-uNoiseL0Km: { type: "number", uniform: "uNoiseL0Km", min: 0, max: 50, step: 0.01 },
-uNoiseAmp0: { type: "number", uniform: "uNoiseAmp0", min: 0, max: 200, step: 0.01 },
-uNoiseL1Km: { type: "number", uniform: "uNoiseL1Km", min: 0, max: 50, step: 0.01 },
-uNoiseAmp1: { type: "number", uniform: "uNoiseAmp1", min: 0, max: 200, step: 0.01 },
-uNoiseL2Km: { type: "number", uniform: "uNoiseL2Km", min: 0, max: 50, step: 0.01 },
-uNoiseAmp2: { type: "number", uniform: "uNoiseAmp2", min: 0, max: 200, step: 0.01 },
-uClumpLKm: { type: "number", uniform: "uClumpLKm", min: 0, max: 20, step: 0.1 },
-uClumpAmp: { type: "number", uniform: "uClumpAmp", min: 0, max: 2, step: 0.01 },
 uDensityGain: { type: "number", uniform: "uDensityGain", min: 0, max: 50, step: 0.01 },
 uSeed: { type: "number", uniform: "uSeed", min: 0, max: 100, step: 1.0 },
-uFeatherJitterAmp: { type: "number", uniform: "uFeatherJitterAmp", min: 0, max: 0.1, step: 0.001 },
-uJitterCellKm: { type: "number", uniform: "uJitterCellKm", min: 0, max: 20, step: 0.1 },
 uEps: { type: "number", uniform: "uEps", min: 0, max: 10, step: 0.001 },
 uK: { type: "number", uniform: "uK", min: 0, max: 2, step: 0.01 },
-uNumSteps: { type: "number", uniform: "uNumSteps", min: 1, max: 64, step: 1.0 },
 uSigmaT: { type: "number", uniform: "uSigmaT", min: 0, max: 5, step: 0.01 },
-uJitterAmp: { type: "number", uniform: "uJitterAmp", min: 0, max: 1, step: 0.01 },
-uCovCellDeg: { type: "number", uniform: "uCovCellDeg", min: 0, max: 1, step: 0.01 },
 uWalkAmpDeg: { type: "number", uniform: "uWalkAmpDeg", min: 0, max: 1, step: 0.01 },
 uWalkFreq: { type: "number", uniform: "uWalkFreq", min: 0, max: 10, step: 0.1 },
-uWalkOctaves: { type: "number", uniform: "uWalkOctaves", min: 1, max: 4, step: 1.0 },
-uGateNoiseLKm: { type: "number", uniform: "uGateNoiseLKm", min: 0, max: 500, step: 1.0 },
-uGateNoiseAmp: { type: "number", uniform: "uGateNoiseAmp", min: 0, max: 1, step: 0.01 },
-uTopSpreadDeg: { type: "number", uniform: "uTopSpreadDeg", min: 0, max: 1, step: 0.01 },
-uNoiseWalkKm: { type: "number", uniform: "uNoiseWalkKm", min: 0, max: 1000, step: 1 },
-uTwistDegMax: { type: "number", uniform: "uTwistDegMax", min: 0, max: 360, step: 1 },
 uCloudBrightness: { type: "number", uniform: "uCloudBrightness", min: 0, max: 1, step: 0.01 },
     }, mat))
 
