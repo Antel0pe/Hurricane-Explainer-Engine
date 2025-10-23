@@ -44,6 +44,10 @@ export function cloudCoverPath() {
   return path.join(repoRoot(), DATA_FOLDER, "cloudCover");
 }
 
+export function cloudWaterAndIce() {
+  return path.join(repoRoot(), DATA_FOLDER, "cloudLiquidAndIce");
+}
+
 export function temperatureDir(pressureLevel: string) {
   return path.join(repoRoot(), DATA_FOLDER, "temperatureImages", String(pressureLevel));
 }

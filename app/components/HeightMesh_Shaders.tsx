@@ -1478,6 +1478,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       <CloudCoverLayer
         key={`cloud-250-${datehour}`}
         url={`/api/cloud_cover/${datehour}`}
+        datehour={datehour}
         renderer={rendererRef.current}
         scene={sceneRef.current}
         camera={cameraRef.current}
@@ -1492,6 +1493,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       <CloudCoverLayer
         key={`cloud-500-${datehour}`}
         url={`/api/cloud_cover/${datehour}`}
+        datehour={datehour}
         renderer={rendererRef.current}
         scene={sceneRef.current}
         camera={cameraRef.current}
@@ -1505,6 +1507,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       <CloudCoverLayer
         key={`cloud-850-${datehour}`}
         url={`/api/cloud_cover/${datehour}`}
+        datehour={datehour}
         renderer={rendererRef.current}
         scene={sceneRef.current}
         camera={cameraRef.current}

@@ -9,6 +9,7 @@ import { getGlobeRadius } from "../utils/globeInfo";
 
 // Swap this to your endpoint (PNG of the global fBm look field, R in [0..1])
 const FBM_NOISE_API = "/api/cloud_cover/noise";
+const CLOUD_LIQUID_WATER_AND_ICE_API = "/api/cloud_water_ice"
 
 function colorChannelFromPressure(p: number): 0 | 1 | 2 {
   if (p === 850) return 0; // R
@@ -514,6 +515,7 @@ uniform float uSeed;           // randomization seed, e.g., 13.0
 
 uniform sampler2D uCov;       // ERA5 cloud cover (0..1), NEAREST, no mips
 uniform sampler2D uLook;      // correlated carrier in UV (0..1), LINEAR, no mips
+uniform sampler2D uCloudWaterAndIce;
 uniform float uK;             // 0..1: blend floor vs quantile (try 0.6–0.8)
 uniform float uEps;           // base feather for smoothstep threshold (e.g., 0.02)
 uniform float uLonOffset;     // same as your worldToUV
@@ -527,6 +529,7 @@ uniform float uWalkFreq;         // walk frequency (units of “per shell thickn
 uniform float uTwistDegMax;    // max rotation of density basis around radial axis (start 14.0)
 
 uniform float uCloudBrightness;
+uniform float uMinOpacity;
 
 // --- Adaptive marching controls ---
 uniform float uMaxTStep;          // target max change in shell-height per sample, e.g. 0.02
@@ -766,6 +769,29 @@ int adaptiveStepCount(vec3 ro, vec3 rd, float t0, float t1){
   return max(1, steps);
 }
 
+float getCloudBrightness(vec3 p0) {
+    // Sample encoded texture
+    vec4 c = texture(uCloudWaterAndIce, worldToUV(p0));
+
+    // Decode and scale as before
+    float liquid = c.r;  
+    float ice    = c.g; 
+
+    // Combine water and ice contributions
+    // Ice contributes slightly less to optical thickness (ice crystals scatter more forward)
+    float opticalDepth = liquid + 0.7 * ice;
+
+    // Map optical depth to brightness:
+    // more water/ice → darker; less → brighter
+    // exponential gives a realistic falloff
+    float brightness = exp(-3.0 * opticalDepth);
+
+    // Optional: remap to nicer visual range (0.15–1.0)
+    brightness = mix(0.15, 1.0, brightness);
+
+    return brightness;
+}
+
 vec4 marchClouds(vec3 ro, vec3 rd){
   float t0, t1;
   if (!shellSegment(ro, rd, uRBase, uRTop, t0, t1)) {
@@ -780,7 +806,6 @@ vec4 marchClouds(vec3 ro, vec3 rd){
   // build a stable cell from the first sample point
   vec3 p0  = ro + t0 * rd;
   float j = hash13(floor(p0 / 1e-6)) * 2.0 - 1.0;
-
   float t  = t0 + (0.5 + 0.5 * j) * dt;
   float accA   = 0.0;
 
@@ -801,7 +826,9 @@ vec4 marchClouds(vec3 ro, vec3 rd){
     t += dt;
   }
 
-  vec3 col = vec3(accA * uCloudBrightness); 
+  if (accA < uMinOpacity) discard;
+
+  vec3 col = vec3(getCloudBrightness(p0)); 
   return vec4(col, accA);
 }
 
@@ -821,6 +848,7 @@ type Props = {
   renderer: THREE.WebGLRenderer | null;
   scene: THREE.Scene | null;
   camera: THREE.Camera | null;
+  datehour?: string;
   controls?: OrbitControls | null;
   enabled?: boolean;
   opacity?: number;                          // final cloud opacity scaler
@@ -847,6 +875,7 @@ export default function CloudCoverLayer({
   iterations = 10,
   gphTex,
   windTex,
+  datehour,
 }: Props) {
   const meshRef = useRef<THREE.Mesh | null>(null);
   const matRef = useRef<THREE.ShaderMaterial | null>(null);
@@ -856,6 +885,7 @@ export default function CloudCoverLayer({
   const volGroupRef = useRef<THREE.Group | null>(null);           // holds proxy + ring meshes
   const rBaseRef = useRef<number>(0);
   const rTopRef = useRef<number>(0);
+  const cloudWaterAndIceRef = useRef<THREE.Texture | null>(null);
 
 
   useEffect(() => {
@@ -886,6 +916,23 @@ export default function CloudCoverLayer({
       },
       undefined,
       err => console.error("CloudCover: ERA5 load error", err)
+    );
+
+    loader.load(
+      CLOUD_LIQUID_WATER_AND_ICE_API + `/${datehour}`,
+      t => {
+        if (disposed) { t.dispose(); return; }
+        t.flipY = true;
+        t.wrapS = THREE.RepeatWrapping;
+        t.wrapT = THREE.ClampToEdgeWrapping;
+        t.minFilter = THREE.LinearMipMapLinearFilter;
+        t.magFilter = THREE.LinearFilter;
+        t.colorSpace = THREE.NoColorSpace;
+        t.generateMipmaps = false;
+        cloudWaterAndIceRef.current = t;
+      },
+      undefined,
+      err => console.error("Cloud liquid water and ice", err)
     );
 
     // Load fBm look texture
@@ -971,27 +1018,29 @@ export default function CloudCoverLayer({
             uSeed: { value: 4 },
             uLook: { value: lookTexRef.current },
             uCov: { value: singleChannelRawEra5 },
+            uCloudWaterAndIce: { value: cloudWaterAndIceRef.current},
             uEps: { value: 0.6 },
             uLonOffset: { value: 0.25 },
             uFlipV: { value: true },
             uK: { value: 0.4 },
             uSigmaT: { value: 2.0 },
-            uWalkAmpDeg: { value: 1.0 },
+            uWalkAmpDeg: { value: 0.0 },
             uWalkFreq: { value: 10.0 },
             uCloudBrightness: { value: 0.9 },
             uMaxTStep: { value: 1.3 },
             uMinStepsAdaptive: { value: 4 },
-            uMaxStepsAdaptive: { value: 12 },
+            uMaxStepsAdaptive: { value: 16 },
             uMaxStepKm: { value: 3 },
             uEdgeL: { value: 0.1 },
             uEdgeGamma: { value: 1.3 },
+            uMinOpacity: { value: 0.6 },
           }
         });
         mat.toneMapped = false;
 
         paneHubDisposeCleanup.push(
           PaneHub.bind(
-            `Cloud Cover`,
+            `Cloud Cover (${pressureLevel}hpa)`,
             {
               uEdgeL: { type: "number", uniform: "uEdgeL", min: 0, max: 10, step: 0.01 },
               uEdgeGamma: { type: "number", uniform: "uEdgeGamma", min: 0, max: 10, step: 0.01 },
@@ -1008,6 +1057,7 @@ export default function CloudCoverLayer({
               uWalkAmpDeg: { type: "number", uniform: "uWalkAmpDeg", min: 0, max: 1, step: 0.01 },
               uWalkFreq: { type: "number", uniform: "uWalkFreq", min: 0, max: 10, step: 0.1 },
               uCloudBrightness: { type: "number", uniform: "uCloudBrightness", min: 0, max: 1, step: 0.01 },
+              uMinOpacity: { type: "number", uniform: "uMinOpacity", min: 0, max: 1, step: 0.01 },
             }, mat))
 
 
