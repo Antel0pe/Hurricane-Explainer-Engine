@@ -17,4 +17,8 @@ export const FEAT = {
   TEMP_250: "temp_250",
   TEMP_500: "temp_500",
   TEMP_850: "temp_850",
+
+  TERRAIN: "terrain",
+
+  PRECIPITATION: "precipitation",
 } as const;

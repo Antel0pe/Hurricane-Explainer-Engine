@@ -48,6 +48,10 @@ export function cloudWaterAndIce() {
   return path.join(repoRoot(), DATA_FOLDER, "cloudLiquidAndIce");
 }
 
+export function precipitation() {
+  return path.join(repoRoot(), DATA_FOLDER, "precipitation");
+}
+
 export function temperatureDir(pressureLevel: string) {
   return path.join(repoRoot(), DATA_FOLDER, "temperatureImages", String(pressureLevel));
 }

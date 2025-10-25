@@ -16,6 +16,7 @@ import { GET_POSITION_Z_SHARED_GLSL3, min_max_gph_ranges_glsl, get_position_z_sh
 import TemperatureShellLayer from "./TemperatureShellLayer";
 import TerrainSphereLayer from "./ElevationLayer";
 import Stats from 'stats.js';
+import PrecipitationLayer from "./PrecipitationLayer";
 
 
 
@@ -1266,6 +1267,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
     Features.seed({
       [FEAT.CLOUD_850]: true,
       [FEAT.WIND_850]: true,
+      [FEAT.TERRAIN]: true,
       // add any other first-load “on” defaults here
       // [FEAT.GPH_500]: true,
     });
@@ -1298,6 +1300,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       PaneHub.bindFlag("Temperature", "850 hPa", FEAT.TEMP_850, false),
 
       PaneHub.bindFlag("Base Layers", "Land Mask", FEAT.LAND_MASK, false),
+
+      PaneHub.bindFlag("Terrain Layer", "Terrain Layer", FEAT.TERRAIN, false),
+
+      PaneHub.bindFlag("Precipitation Layer", "Precipitation", FEAT.PRECIPITATION, false),
     );
 
 
@@ -1347,6 +1353,10 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
   const temp250On = useFeatureFlag<boolean>(FEAT.TEMP_250, false);
   const temp500On = useFeatureFlag<boolean>(FEAT.TEMP_500, false);
   const temp850On = useFeatureFlag<boolean>(FEAT.TEMP_850, false);
+
+  const terrainLayerOn = useFeatureFlag<boolean>(FEAT.TERRAIN, false);
+
+  const precipitationLayerOn = useFeatureFlag<boolean>(FEAT.PRECIPITATION, false);
 
   // Fill parent, not window
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
@@ -1554,7 +1564,7 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       autoFrameOnce={true}
     />)}
 
-    <TerrainSphereLayer
+    {terrainLayerOn && (<TerrainSphereLayer
       renderer={rendererRef.current}
       scene={sceneRef.current}
       camera={cameraRef.current}
@@ -1563,9 +1573,15 @@ export default function HeightMesh_Shaders({ pngUrl, landUrl, uvUrl, exaggeratio
       exaggeration={50.0}
       enabled={true}
       onReady={(mesh) => {
-        console.log("Terrain sphere ready:", mesh);
       }}
-    />
+    />)}
+
+    {precipitationLayerOn && (<PrecipitationLayer
+    renderer={rendererRef.current}
+      scene={sceneRef.current}
+      camera={cameraRef.current}
+      datehour={datehour}
+    />)}
 
 
   </div>;
