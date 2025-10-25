@@ -165,7 +165,7 @@ export default function PrecipitationLayer({
     let disposed = false;
     const globeR = getGlobeRadius();
     // PaneHub controls
-        const disposers: Array<() => void> = [];
+    const disposers: Array<() => void> = [];
 
     const loader = new THREE.TextureLoader();
     loader.load(
@@ -194,60 +194,60 @@ export default function PrecipitationLayer({
 
         // ... inside the TextureLoader onLoad callback, where you create mat/mesh:
 
-const mat = new THREE.ShaderMaterial({
-  glslVersion: THREE.GLSL3,
-  vertexShader: PRECIP_VERT,
-  fragmentShader: PRECIP_FRAG,
-  uniforms: {
-    uRBase:           { value: globeR },
-    uStreakLen:       { value: 2.0 },
-    uThickness:       { value: 0.003 },
+        const mat = new THREE.ShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: PRECIP_VERT,
+          fragmentShader: PRECIP_FRAG,
+          uniforms: {
+            uRBase: { value: globeR },
+            uStreakLen: { value: 2.0 },
+            uThickness: { value: 0.003 },
 
-    uPrecip:          { value: t },
-    uTexMaxMmPerHr:   { value: 0.1 },
-    uDensityGain:     { value: 1.0 },
-    uRefMmPerHr:      { value: 0.02 },
-    uMaxPerCell:      { value: maxPerCell },
+            uPrecip: { value: t },
+            uTexMaxMmPerHr: { value: 0.1 },
+            uDensityGain: { value: 1.0 },
+            uRefMmPerHr: { value: 0.02 },
+            uMaxPerCell: { value: maxPerCell },
 
-    // --- NEW motion uniforms ---
-    uTime:            { value: 0.0 },
-    uTopHeight:       { value: 10.0 },        // top of fall corridor
-    uBottomHeight:    { value: 2.0 },         // near-surface
-    uFallSpeed:       { value: 20.0 },        // world units / second
-    uDownWorld:       { value: new THREE.Vector3(0, -1, 0).normalize() },
-  },
-  transparent: false,
-  depthTest: true,
-  depthWrite: false,
-  blending: THREE.NormalBlending,
-  side: THREE.DoubleSide, // keep front only for performance; flip if you need both
-});
+            // --- NEW motion uniforms ---
+            uTime: { value: 0.0 },
+            uTopHeight: { value: 10.0 },        // top of fall corridor
+            uBottomHeight: { value: 2.0 },         // near-surface
+            uFallSpeed: { value: 20.0 },        // world units / second
+            uDownWorld: { value: new THREE.Vector3(0, -1, 0).normalize() },
+          },
+          transparent: false,
+          depthTest: true,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+          side: THREE.DoubleSide, // keep front only for performance; flip if you need both
+        });
 
-// PaneHub controls (only ones that make sense)
-disposers.push(
-  PaneHub.bind(
-    "Precipitation",
-    {
-      uThickness:   { type: "number", uniform: "uThickness", min: 0.001, max: 0.2, step: 0.001 },
-      uDensityGain: { type: "number", uniform: "uDensityGain", min: 0.0, max: 8.0, step: 0.1 },
-      uTopHeight:   { type: "number", uniform: "uTopHeight", min: 0, max: 200, step: 1 },
-      uBottomHeight:{ type: "number", uniform: "uBottomHeight", min: 0, max: 100, step: 1 },
-      uFallSpeed:   { type: "number", uniform: "uFallSpeed", min: 1, max: 400, step: 1 },
-    },
-    mat
-  )
-);
+        // PaneHub controls (only ones that make sense)
+        disposers.push(
+          PaneHub.bind(
+            "Precipitation",
+            {
+              uThickness: { type: "number", uniform: "uThickness", min: 0.001, max: 0.2, step: 0.001 },
+              uDensityGain: { type: "number", uniform: "uDensityGain", min: 0.0, max: 8.0, step: 0.1 },
+              uTopHeight: { type: "number", uniform: "uTopHeight", min: 0, max: 200, step: 1 },
+              uBottomHeight: { type: "number", uniform: "uBottomHeight", min: 0, max: 100, step: 1 },
+              uFallSpeed: { type: "number", uniform: "uFallSpeed", min: 1, max: 400, step: 1 },
+            },
+            mat
+          )
+        );
 
-// Instanced mesh as before
-const mesh = new THREE.InstancedMesh(geom, mat, count);
-mesh.frustumCulled = false;   // keep your current setting
-mesh.renderOrder = 20;
+        // Instanced mesh as before
+        const mesh = new THREE.InstancedMesh(geom, mat, count);
+        mesh.frustumCulled = false;   // keep your current setting
+        mesh.renderOrder = 20;
 
-// --- NEW: feed uTime every frame (GPU-only animation)
-mesh.onBeforeRender = (_renderer, _scene, _camera) => {
-  if (!mat.uniforms) return;
-  mat.uniforms.uTime.value = performance.now() * 0.001; // seconds
-};
+        // --- NEW: feed uTime every frame (GPU-only animation)
+        mesh.onBeforeRender = (_renderer, _scene, _camera) => {
+          if (!mat.uniforms) return;
+          mat.uniforms.uTime.value = performance.now() * 0.001; // seconds
+        };
 
 
         scene.add(mesh);
@@ -255,19 +255,6 @@ mesh.onBeforeRender = (_renderer, _scene, _camera) => {
         matRef.current = mat;
         onReady?.(mesh, mat);
 
-        // cleanup
-        const cleanup = () => {
-          if (disposed) return;
-          disposed = true;
-          // scene.remove(mesh);
-          geom.dispose();
-          mat.dispose();
-          t.dispose();
-          disposers.forEach((d) => d && d());
-        };
-
-        // unmount cleanup hook
-        (mesh as any)._cleanup = cleanup;
       },
       undefined,
       (err) => console.error("ERA5 Precip load error:", err)
@@ -276,9 +263,7 @@ mesh.onBeforeRender = (_renderer, _scene, _camera) => {
     return () => {
       disposed = true;
       scene.remove(meshRef.current!);
-      if (meshRef.current && (meshRef.current as any)._cleanup) {
-        (meshRef.current as any)._cleanup();
-      }
+
       for (const d of disposers) {
         if (d) d();
       }

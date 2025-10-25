@@ -268,7 +268,7 @@ paneHubDisposeCleanup.push(
               albedo.magFilter = THREE.LinearFilter;
               albedo.generateMipmaps = true;
               albedo.anisotropy =
-                (renderer.capabilities as any).getMaxAnisotropy?.() ?? 1;
+                renderer.capabilities.getMaxAnisotropy?.() ?? 1;
 
 albedo.needsUpdate = true;
 

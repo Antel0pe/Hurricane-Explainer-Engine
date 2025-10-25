@@ -972,10 +972,13 @@ export default function CloudCoverLayer({
       if (volGroupRef.current) {
         scene!.remove(volGroupRef.current);
         volGroupRef.current.children.forEach(c => {
-          // @ts-ignore
-          c.geometry?.dispose?.();
-          // @ts-ignore
-          c.material?.dispose?.();
+          const mesh = c as THREE.Mesh;
+          mesh.geometry?.dispose?.();
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose?.());
+          } else {
+            mesh.material?.dispose?.();
+          }
         });
         volGroupRef.current = null;
       }
@@ -1243,10 +1246,13 @@ export default function CloudCoverLayer({
       if (volGroupRef.current && scene) {
         scene.remove(volGroupRef.current);
         volGroupRef.current.children.forEach(c => {
-          // @ts-ignore
-          c.geometry?.dispose?.();
-          // @ts-ignore
-          c.material?.dispose?.();
+          const mesh = c as THREE.Mesh;
+          mesh.geometry?.dispose?.();
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose?.());
+          } else {
+            mesh.material?.dispose?.();
+          }
         });
         volGroupRef.current = null;
       }
@@ -1270,10 +1276,11 @@ export default function CloudCoverLayer({
     if (!scene || !camera) return;
     let raf = 0;
     const tick = () => {
-      scene.traverse(obj => {
-        const mat = (obj as any).material as THREE.ShaderMaterial;
+      scene.traverse((obj: THREE.Object3D) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const mat = obj.material as THREE.ShaderMaterial;
         if (mat && mat.uniforms && mat.uniforms.uCamPos) {
-          mat.uniforms.uCamPos.value.copy((camera as any).position);
+          mat.uniforms.uCamPos.value.copy(camera.position);
         }
 
       });
