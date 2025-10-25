@@ -930,6 +930,7 @@ export default function CloudCoverLayer({
         t.colorSpace = THREE.NoColorSpace;
         t.generateMipmaps = false;
         cloudWaterAndIceRef.current = t;
+         tryRunPipelineAndAttach();
       },
       undefined,
       err => console.error("Cloud liquid water and ice", err)
@@ -954,7 +955,7 @@ export default function CloudCoverLayer({
     );
 
     function tryRunPipelineAndAttach() {
-      if (!pipelineRef.current || !era5CoverageRawRef.current || !lookTexRef.current) return;
+      if (!pipelineRef.current || !era5CoverageRawRef.current || !lookTexRef.current || !cloudWaterAndIceRef.current) return;
       const colorChannel = colorChannelFromPressure(pressureLevel);
       // ---- Run full pipeline (blur + per-tile threshold iterations) ----
       const { singleChannelRawEra5, tau, tauBlur } = pipelineRef.current.runOnce({
