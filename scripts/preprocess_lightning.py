@@ -1,165 +1,237 @@
-import io
-import os
-from datetime import datetime
-
+import io, os, gc
 import numpy as np
 import xarray as xr
 from PIL import Image
 
+# ---------- Openers (lazy, time-chunked) ----------
 
-def open_era5_dataset(path: str) -> xr.Dataset:
+def open_cfgrib_var(path: str, shortName: str, index_tag: str):
     if not os.path.exists(path):
-        raise FileNotFoundError(f"GRIB file not found: {path}")
-    return xr.open_dataset(path, engine="cfgrib")
+        raise FileNotFoundError(path)
 
+    # Chunk time by 1 so we can pull one slice at a time without materializing the whole cube
+    ds = xr.open_dataset(
+        path,
+        engine="cfgrib",
+        chunks={"time": 1},  # key to keep everything lazy
+        backend_kwargs={
+            "filter_by_keys": {"shortName": shortName},
+            "indexpath": f"{path}.{index_tag}.idx",
+        },
+    )
+    da = ds[shortName].squeeze(drop=True)
 
-def get_var(ds: xr.Dataset, preferred_names):
-    for name in preferred_names:
-        if name in ds.variables:
-            return ds[name]
-    for v in ds.variables:
-        var = ds[v]
-        if any(getattr(var, "shortName", "") == n for n in preferred_names):
-            return var
-        if any(getattr(var, "name", "") == n for n in preferred_names):
-            return var
-        if any(getattr(var, "long_name", "") == n for n in preferred_names):
-            return var
-        if any(getattr(var, "standard_name", "") == n for n in preferred_names):
-            return var
-    raise KeyError(f"None of {preferred_names} found in dataset. Present: {list(ds.variables)}")
+    # Ensure ascending latitude without copying full array: just rely on indexing later
+    asc_lat = False
+    if "latitude" in da.coords and da.latitude.ndim == 1:
+        latv = da.latitude.values
+        asc_lat = np.any(np.diff(latv) > 0)  # true if ascending
+    da = da.assign_coords(valid_time=da["time"]).swap_dims({"time": "valid_time"})
+    return da, asc_lat
 
+def select_cape_crr(path: str):
+    cape, cape_lat_asc = open_cfgrib_var(path, shortName="cape", index_tag="cape")
+    crr,  crr_lat_asc  = open_cfgrib_var(path, shortName="crr",  index_tag="crr")
 
-def select_cape_crr(ds: xr.Dataset):
-    """
-    Return (cape, crr, time_coord) aligned on time/lat/lon.
+    # We won’t call .reindex_like() on the whole arrays (that can force big copies).
+    # Instead, we’ll apply the same per-slice transforms to each variable.
 
-    - cape: Convective available potential energy [J kg^-1]
-    - crr : Convective rain rate [m s^-1]
-    """
-    cape = get_var(ds, ["cape", "convective_available_potential_energy"])
-    crr  = get_var(ds, ["crr", "convective_rain_rate"])
+    time_coord = "valid_time"
+    lat = cape.latitude.values
+    lon = cape.longitude.values
 
-    def fix_lat(da: xr.DataArray) -> xr.DataArray:
-        if "latitude" in da.coords and da.latitude.ndim == 1 and np.any(np.diff(da.latitude.values) < 0):
-            return da.sortby("latitude")
-        return da
+    # Precompute latitude flip once (views will be used each time)
+    flip_lat = False
+    if lat.ndim == 1:
+        flip_lat = lat[0] < lat[-1]  # descending is typical; flip if ascending
+    if flip_lat:
+        lat = lat[::-1]
 
-    cape = fix_lat(cape)
-    crr  = fix_lat(crr)
+    # Precompute the roll/order for [0,360] -> [-180,180] ONCE
+    lon0 = lon.copy()
+    nx = lon0.size
+    dlon = float(np.round((lon0[1] - lon0[0]) * 1e6) / 1e6)
+    if lon0.min() >= -180 and lon0.max() <= 180:
+        shift = 0
+        order = np.arange(nx)
+        lon_fixed = lon0
+    else:
+        shift = int(np.round((-180.0 - lon0[0]) / dlon)) % nx
+        lon_shifted = lon0 + shift * dlon
+        lon_shifted = ((lon_shifted + 180.0) % 360.0) - 180.0
+        order = np.argsort(lon_shifted)
+        lon_fixed = lon_shifted[order]
 
-    time_coord = "time" if "time" in cape.coords else ("valid_time" if "valid_time" in cape.coords else None)
-    if time_coord is None:
-        raise KeyError("No time coordinate found (expected 'time' or 'valid_time').")
+    return cape, crr, time_coord, lat, lon_fixed, flip_lat, shift, order
 
-    # align CRR to CAPE grid
-    crr = crr.reindex_like(cape, method=None, copy=False)
+# ---------- CP -> Probability (in-place friendly) ----------
 
-    return cape, crr, time_coord
-
-
-def to_minus180_180(lon_1d: np.ndarray, arr: np.ndarray):
-    """Shift longitudes from [0,360] to [-180,180] while rolling array columns accordingly."""
-    lon = lon_1d.copy()
-    nx = lon.size
-    dlon = float(np.round((lon[1] - lon[0]) * 1e6) / 1e6)
-    if lon.min() >= -180 and lon.max() <= 180:
-        return lon, arr
-    shift = int(np.round((-180.0 - lon[0]) / dlon)) % nx
-    arr_rot = np.roll(arr, shift=shift, axis=1)
-    lon_rot = lon + shift * dlon
-    lon_rot = ((lon_rot + 180.0) % 360.0) - 180.0
-    order = np.argsort(lon_rot)
-    return lon_rot[order], arr_rot[:, order]
-
-
-# ---------- CP -> Probability mapping (logistic on log10(CP)) ----------
-
-def cp_to_probability(cp2d: np.ndarray,
-                      log_lo: float = 3.0,  p_lo: float = 0.05,   # ~5% at CP=1e3
-                      log_hi: float = 5.5,  p_hi: float = 0.97):  # ~97% at CP≈3e5
-    """
-    Map CP (CAPE[J/kg] * convective rain rate[mm/h]) to probability (0..1).
-    Uses a logistic fit constrained to pass through (log_lo -> p_lo) and (log_hi -> p_hi).
-    """
-    # Solve for A,B in: logit(p) = A + B * x, where x = log10(CP)
+def cp_to_probability_inplace(cp2d: np.ndarray,
+                            log_lo: float = 3.0,  p_lo: float = 0.05,
+                            log_hi: float = 5.5,  p_hi: float = 0.97):
+    # Solve A, B for logit(p) = A + B*x, x = log10(CP)
     def logit(p): return np.log(p / (1.0 - p))
     x1, x2 = log_lo, log_hi
     B = (logit(p_hi) - logit(p_lo)) / (x2 - x1)
     A = logit(p_lo) - B * x1
 
-    x = np.log10(np.clip(cp2d, 1e-9, None))
-    prob = 1.0 / (1.0 + np.exp(-(A + B * x)))
-    # Clean up
-    prob = np.where(np.isfinite(prob), prob, 0.0)
-    return np.clip(prob, 0.0, 1.0)
+    # Reuse cp2d as the working buffer to avoid extra arrays
+    # CP <= 0 → set to tiny before log10
+    np.maximum(cp2d, 1e-9, out=cp2d)
+    np.log10(cp2d, out=cp2d)                      # cp2d now holds x
+    np.multiply(cp2d, B, out=cp2d)                # B*x
+    np.add(cp2d, A, out=cp2d)                     # A + B*x
+    np.negative(cp2d, out=cp2d)                   # -(A + B*x)
+    np.exp(cp2d, out=cp2d)                        # exp(-(...))
+    np.add(cp2d, 1.0, out=cp2d)                   # 1 + exp(-(...))
+    np.reciprocal(cp2d, out=cp2d)                 # 1 / (1 + exp(...))
+    np.clip(cp2d, 0.0, 1.0, out=cp2d)             # cp2d now holds prob in [0,1]
+    return cp2d
 
-
-def encode_prob_png(prob2d: np.ndarray) -> bytes:
-    """Encode 0..1 probability to 8-bit grayscale PNG (0..255)."""
-    gray = np.rint(np.clip(prob2d, 0.0, 1.0) * 255.0).astype(np.uint8)
+def encode_prob_png_inplace(prob2d: np.ndarray) -> bytes:
+    # Convert to uint8 without making an extra float copy
+    gray = np.rint(prob2d * 255.0, out=prob2d).astype(np.uint8, copy=False)
     im = Image.fromarray(gray, mode="L")
     buf = io.BytesIO()
     im.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf.read()
 
+def _times_as(arr, unit="h"):
+    # Normalize a datetime64 array to a specific unit (hour is good for ERA5 hourly)
+    return arr.astype(f"datetime64[{unit}]")
+
+def compute_common_times(cape, crr, time_coord="valid_time", unit="h"):
+    t_cape = _times_as(cape[time_coord].values, unit=unit)
+    t_crr  = _times_as(crr [time_coord].values, unit=unit)
+    common = np.intersect1d(t_cape, t_crr)
+    if common.size == 0:
+        raise RuntimeError(
+            f"No overlapping times after normalization to '{unit}'. "
+            f"CAPE range: {t_cape.min()}..{t_cape.max()}, "
+            f"CRR range: {t_crr.min()}..{t_crr.max()}"
+        )
+    return common
+
+def select_2d_at_time(da, t, time_coord="valid_time",
+                      method=None, tolerance=None):
+    """
+    Return a 2D [latitude, longitude] slice at time t.
+    If method == 'nearest', we pick the closest timestamp by NumPy (robust to
+    duplicates / non-monotonic indices) and enforce `tolerance` if given.
+    """
+    # --- choose time ---
+    if method == "nearest":
+        # normalize both to hours to match your driver times
+        t_da = da[time_coord].values
+        t_da_h = t_da.astype("datetime64[h]")
+        t_h = np.asarray(t).astype("datetime64[h]")
+
+        # argmin over absolute difference
+        diffs = np.abs(t_da_h - t_h)
+        i = int(np.argmin(diffs))
+        if tolerance is not None and diffs[i] > tolerance:
+            raise KeyError(f"no time within tolerance {tolerance} of {t_h}")
+
+        da = da.isel({time_coord: i})
+    else:
+        # exact match (or xarray-managed selection)
+        if time_coord in da.coords:
+            da = da.sel({time_coord: t}, method=method, tolerance=tolerance)
+        elif "time" in da.coords:
+            da = da.sel(time=t, method=method, tolerance=tolerance)
+        else:
+            raise KeyError("No time coordinate")
+
+    # --- drop nuisance dims and ensure 2D [lat, lon] ---
+    for dim in list(da.dims):
+        if dim in ("latitude", "longitude"):
+            continue
+        da = da.isel({dim: 0}) if da.sizes.get(dim, 1) > 1 else da.squeeze(dim, drop=True)
+
+    da = da.squeeze(drop=True)
+    if set(da.dims) != {"latitude", "longitude"}:
+        raise RuntimeError(f"Expected 2D [latitude, longitude]; got {da.dims} with sizes {da.sizes}")
+
+    return da
+
+# ---------- Main (streaming, per-time-slice) ----------
 
 def main():
-    # --- paths (adjust) ---
-    grib_path = "/mnt/c/Users/dmmsp/Downloads/cape_crr.grib"
-    out_dir   = "/mnt/c/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data/lightning_prob"
+    grib_path = "/mnt/c/Users/dmmsp/Downloads/lightning.grib"
+    out_dir   = "/mnt/c/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data/lightning"
     os.makedirs(out_dir, exist_ok=True)
 
-    ds = open_era5_dataset(grib_path)
-    cape, crr, time_coord = select_cape_crr(ds)
+    cape, crr, time_coord, lat, lon_fixed, flip_lat, shift, order = select_cape_crr(grib_path)
+    # Drive the loop by CAPE's hourly timestamps
+    t_cape_h = _times_as(cape[time_coord].values, unit="h")
+    t_crr_h  = _times_as(crr [time_coord].values, unit="h")
 
-    lat = cape.latitude.values
-    lon = cape.longitude.values
-    times = cape[time_coord].values
+    # We'll accept CRR nearest within ±3 hours
+    tol = np.timedelta64(6, "h")
+
+    # Keep only CAPE hours that are within CRR coverage ± tol (avoids KeyError at edges)
+    tmin = t_crr_h.min() - tol
+    tmax = t_crr_h.max() + tol
+    times = t_cape_h[(t_cape_h >= tmin) & (t_cape_h <= tmax)]
 
     print(f"Dataset time range: {np.datetime_as_string(times[0], unit='h')} .. {np.datetime_as_string(times[-1], unit='h')}")
-
-    # ensure we work with north->south decreasing if needed (consistent orientation)
-    lat_work = lat.copy()
-    flip_lat = lat_work[0] < lat_work[-1]
-    if flip_lat:
-        lat_work = lat_work[::-1]
+    # Constants
+    MPS_TO_MMPH = 3_600_000.0  # 1 m/s -> mm/h
 
     total = len(times)
     for idx, t in enumerate(times, start=1):
         ts = np.datetime_as_string(t, unit="h").replace("-", "").replace(":", "").replace("T", "")
-        png_path = os.path.join(out_dir, f"lightning_prob_{ts}.png")
+        png_path = os.path.join(out_dir, f"lightning_{ts}.png")
 
-        # Extract 2D slices
-        C2d   = cape.sel({time_coord: np.datetime64(t)}).values.astype(np.float32)  # J/kg
-        CRR2d = crr.sel({time_coord: np.datetime64(t)}).values.astype(np.float32)   # m/s
+        # CAPE exact hour; CRR nearest within ±3h
+        C2d_da   = select_2d_at_time(cape, t, time_coord=time_coord, method=None,      tolerance=np.timedelta64(0, "m"))
+        CRR2d_da = select_2d_at_time(crr,  t, time_coord=time_coord, method="nearest", tolerance=tol)  # tol = 3h
 
+
+        C2d   = np.asarray(C2d_da.data, dtype=np.float32)
+        CRR2d = np.asarray(CRR2d_da.data, dtype=np.float32)
+
+        # Apply latitude flip as a view (no copy)
         if flip_lat:
-            C2d   = C2d[::-1, :]
+            C2d = C2d[::-1, :]
             CRR2d = CRR2d[::-1, :]
 
-        # Shift longitudes to [-180,180]
-        lon_fixed, C2d   = to_minus180_180(lon, C2d)
-        _,         CRR2d = to_minus180_180(lon, CRR2d)
+        # Apply 0..360 → -180..180 using one roll + reorder (these create new arrays once per slice)
+        if shift:
+            C2d = np.roll(C2d, shift=shift, axis=1)[:, order]
+            CRR2d = np.roll(CRR2d, shift=shift, axis=1)[:, order]
+        elif order is not None and (order[0] != 0 or not np.all(order == np.arange(order.size))):
+            C2d = C2d[:, order]
+            CRR2d = CRR2d[:, order]
 
-        # --- Units: convective rain rate m/s -> mm/h
-        crr_mmph = CRR2d * (1000.0 * 3600.0)  # 1 m/s = 1000 mm/s; *3600 = mm/h
+        # Convert CRR to mm/h in-place
+        CRR2d *= MPS_TO_MMPH
 
-        # --- CP predictor (J/kg * mm/h)
-        CP = np.nan_to_num(C2d, nan=0.0) * np.nan_to_num(crr_mmph, nan=0.0)
+        # CP = CAPE * CRR (reuse C2d’s buffer for CP to avoid allocating another big array)
+        # C2d becomes CP here
+        np.multiply(C2d, CRR2d, out=C2d)
+        # Free CRR2d ASAP
+        del CRR2d
 
-        # --- Probability from CP (defaults: ~5% at 1e3, ~97% at 3e5)
-        prob = cp_to_probability(CP, log_lo=3.0, p_lo=0.05, log_hi=5.5, p_hi=0.97)
+        # Replace NaNs with 0 in-place
+        np.nan_to_num(C2d, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # --- Encode to single-channel PNG (0..255 = 0–100%)
-        png_bytes = encode_prob_png(prob)
+        # Map CP -> probability in-place (C2d reused as prob)
+        prob = cp_to_probability_inplace(C2d)
+
+        # Encode and write
+        png_bytes = encode_prob_png_inplace(prob)
         with open(png_path, "wb") as f:
             f.write(png_bytes)
 
+        # Explicit cleanup to keep peak RSS low
+        del C2d, prob, png_bytes
+        if idx % 8 == 0:  # occasional GC batches
+            gc.collect()
+
         if idx % 50 == 0 or idx == total:
             print(f"[{idx}/{total}] Wrote {os.path.basename(png_path)}")
-
 
 if __name__ == "__main__":
     main()
