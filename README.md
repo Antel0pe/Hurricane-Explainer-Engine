@@ -99,3 +99,7 @@ future ideas:
 - move wind particles + trails out of the ground with correct zoffset
     - reset wind particle height when gph isnt enabled after it was once. 
     - figure out how to not make zoffset apply or smaller one apply when gph is enabled since we want the particles to mostly stay on gph but without it stay off the ground
+
+
+## Clouds
+- Categories of data = 2d structure, opacity, height
