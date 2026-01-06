@@ -6,23 +6,10 @@ import numpy as np
 import xarray as xr
 from PIL import Image
 
-
-def resolve_paths():
-    """Return absolute paths for project root, data dir, grib path, and output dir."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.abspath(os.path.join(here, os.pardir))
-    data_dir = os.path.join(root, "data")
-    grib_path = os.path.join(data_dir, "data.grib")
-    out_dir = os.path.join(data_dir, "cloudImages_liq_ice")
-    os.makedirs(out_dir, exist_ok=True)
-    return root, data_dir, grib_path, out_dir
-
-
 def open_era5_dataset(path: str) -> xr.Dataset:
     if not os.path.exists(path):
         raise FileNotFoundError(f"GRIB file not found: {path}")
     return xr.open_dataset(path, engine="cfgrib")
-
 
 def get_var(ds: xr.Dataset, preferred_names):
     for name in preferred_names:
@@ -108,7 +95,6 @@ def encode_liq_ice_png(tclw2d: np.ndarray, tciw2d: np.ndarray):
 def main():
     grib_path = "/mnt/c/Users/dmmsp/Downloads/cloudLiquidWaterAndIce.grib"
     out_dir   = "/mnt/c/Users/dmmsp/Projects/Hurricane-Explainer-Engine/data/cloudLiquidAndIce"
-    # _, _, grib_path, out_dir = resolve_paths()
 
     ds = open_era5_dataset(grib_path)
     tclw, tciw, time_coord = select_liq_ice(ds)
